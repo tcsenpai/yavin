@@ -182,7 +182,9 @@ export const mission1: LevelDef = {
     let farTime = 0;
     let tieRefill = 20;
     const rng = new Rng(9);
-    const leash = { center: battleCentre, radius: 5500 };
+    // Shared by every fighter's brain: once the destroyers are out, the dogfight re-centres on the player.
+    const leash = { center: battleCentre.clone(), radius: 5500 };
+    let screenBroken = false;
 
     ctx.onUpdate = (dt) => {
       dist = Math.max(2500, dist - closing * dt);
@@ -193,7 +195,27 @@ export const mission1: LevelDef = {
         ctx.markers = player.pos.distanceTo(lead.pos) > 500 ? [{ pos: lead.pos, key: 'spk.redLeader' }] : [];
         return;
       }
-      // Objective markers: shield domes first, then the exposed bridge.
+      if (!screenBroken && caps.every((c) => c.disabled)) {
+        // Destroyers out: battery-run pilots rejoin the dogfight and everything converges on Red Five.
+        screenBroken = true;
+        leash.radius = 2200;
+        for (const s of [...wing, ...golds]) if (s.alive) s.brain = new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
+      }
+      if (screenBroken) {
+        leash.center.copy(player.pos);
+        // Stragglers left kilometres away (TIEs or wingmen) are quietly brought back into the fight,
+        // out of the player's view, so the remaining kills are never stranded across the battlefield.
+        const fwd = player.forward();
+        for (const s of ctx.world.ships) {
+          if (s === player || !s.alive || s.kinematic) continue;
+          const off = s.pos.clone().sub(player.pos);
+          if (off.length() < 4000 || off.normalize().dot(fwd) > 0.3) continue;
+          const back = fwd.clone().negate().add(new THREE.Vector3(rng.range(-0.6, 0.6), rng.range(-0.3, 0.3), rng.range(-0.6, 0.6))).normalize();
+          s.pos.copy(player.pos).addScaledVector(back, 2200);
+          s.vel.copy(player.vel);
+        }
+      }
+      // Objective markers: shield domes first, then the exposed bridge; finally the remaining TIEs.
       ctx.markers = caps.flatMap((c) => {
         if (c.disabled) return [];
         const gensAlive = c.subsystems.filter((s) => s.kind === 'shieldGen' && s.alive);
@@ -201,17 +223,24 @@ export const mission1: LevelDef = {
         const br = c.subsystems.find((s) => s.kind === 'bridge' && s.alive);
         return br ? [{ pos: br.pos, key: 'ls.marker.bridge' as StringKey }] : [];
       });
+      if (screenBroken && ties < tieGoal) {
+        const near = tieList.filter((t) => t.alive).sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+        ctx.markers = near.slice(0, 3).map((t) => ({ pos: t.pos, key: 'tgt.tie' as StringKey }));
+      }
       // Capital ships slow to a standstill once they are in position.
       for (const c of caps) if (!c.disabled && c.root.position.z > -8000) c.vel.multiplyScalar(Math.exp(-0.4 * dt));
       tieRefill -= dt;
       const alive = tieList.filter((t) => t.alive).length;
       if (tieRefill <= 0 && alive < 3 + Math.round(ctx.difficulty) && ties < tieGoal) {
-        tieRefill = 16 / ctx.difficulty;
+        tieRefill = (screenBroken ? 8 : 16) / ctx.difficulty;
         const ang = rng.range(-0.8, 0.8);
-        const from = new THREE.Vector3(Math.sin(ang) * 4500, rng.range(-500, 600), battleCentre.z - Math.cos(ang) * 3500);
+        // Before the screen breaks, waves come from the station; afterwards they come straight at the player.
+        const from = screenBroken
+          ? player.pos.clone().add(new THREE.Vector3(Math.sin(ang * 4) * 2200, rng.range(-300, 400), Math.cos(ang * 4) * 2200))
+          : new THREE.Vector3(Math.sin(ang) * 4500, rng.range(-500, 600), battleCentre.z - Math.cos(ang) * 3500);
         for (const t of spawnTies(ctx, 3, from, player.pos, 0.6, 0, leash)) trackTie(t);
       }
-      if (player.alive && player.pos.distanceTo(battleCentre) > 8000) {
+      if (!screenBroken && player.alive && player.pos.distanceTo(battleCentre) > 8000) {
         farTime += dt;
         ctx.hint = 'hint.returnBattle';
         if (farTime > 20) ctx.fail('fail.deserted');

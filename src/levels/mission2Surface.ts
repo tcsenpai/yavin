@@ -155,6 +155,12 @@ export const mission2: LevelDef = {
     ctx.onUpdate = (dt) => {
       sc.update(dt);
       if (!tiePhase) return;
+      // The dogfight follows Red Five (never strand the TIEs over an empty sector), kept above the rooftops.
+      arena.copy(player.pos).setY(Math.max(player.pos.y, 380));
+      if (!ctx.markers.some((m) => m.key === 'spk.biggs')) {
+        const near = ties.filter((t) => t.alive).sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+        ctx.markers = kills < tieGoal ? near.slice(0, 3).map((t) => ({ pos: t.pos, key: 'tgt.tie' as StringKey })) : [];
+      }
       // TIE scream on close pass-bys.
       for (const t of ties) {
         if (!t.alive) continue;

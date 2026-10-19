@@ -530,16 +530,18 @@ export class Game {
 
   private pickTarget(p: Ship, world: World, cycle: boolean): void {
     const fwd = p.forward(_v);
-    const cands = world.targetables
+    const all = world.targetables
       .filter((tg) => tg.team === 'empire' && tg.alive)
       .map((tg) => {
         _w.copy(tg.pos).sub(p.pos);
         const d = _w.length();
         const cos = _w.dot(fwd) / Math.max(d, 1);
         return { tg, score: (1.2 - cos) * 3000 + d * 0.5, d };
-      })
-      .filter((c) => c.d < 5000)
-      .sort((a, b) => a.score - b.score);
+      });
+    // Prefer what's in front within 5 km; if nothing is that close, fall back to the nearest hostile anywhere
+    // so the edge arrow always leads the player to the remaining enemies.
+    let cands = all.filter((c) => c.d < 5000).sort((a, b) => a.score - b.score);
+    if (!cands.length) cands = all.sort((a, b) => a.d - b.d).slice(0, 1);
     if (!cands.length) {
       this.target = null;
       return;
@@ -610,7 +612,9 @@ export class Game {
     }
     const cycle = this.input.consume('target');
     if (cycle) this.manualTargetAt = ctx.world.time;
-    if (cycle || !this.target?.alive) this.pickTarget(p, ctx.world, cycle);
+    // Also re-pick when the auto-selected target is far away (>5 km) and the player hasn't chosen it by hand.
+    const stale = !!this.target && this.target.pos.distanceTo(p.pos) > 5000 && ctx.world.time - this.manualTargetAt > 4;
+    if (cycle || stale || !this.target?.alive) this.pickTarget(p, ctx.world, cycle);
 
     // Aim: cannons converge ahead. Aim assist (difficulty-scaled, optional) only engages when the reticle is
     // already close to a hostile's lead point: it bends the bolts onto that point and adds a little stick friction.
