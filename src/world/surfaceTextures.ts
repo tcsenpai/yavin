@@ -39,7 +39,7 @@ export function getHullTextures(): HullTextures {
   r.fillStyle = gray(190);
   r.fillRect(0, 0, SIZE, SIZE);
 
-  // Recursive panel subdivision — the DS-I hull is a quilt of rectangular plates of very mixed sizes.
+  // Recursive panel subdivision, the DS-I hull is a quilt of rectangular plates of very mixed sizes.
   const panels: [number, number, number, number][] = [];
   const split = (x: number, y: number, w: number, hh: number, depth: number) => {
     const canSplit = depth < 8 && (w > 24 || hh > 24);

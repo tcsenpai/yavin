@@ -1,4 +1,4 @@
-# Legal Notice — The Battle of Yavin / La Battaglia di Yavin
+# Legal Notice: The Battle of Yavin / La Battaglia di Yavin
 
 **English** · [Italiano](#avviso-legale--la-battaglia-di-yavin)
 
@@ -6,15 +6,15 @@
 
 ---
 
-## 1. Unofficial fan work — no affiliation
+## 1. Unofficial fan work: no affiliation
 
-*The Battle of Yavin* (Italian: *La Battaglia di Yavin*) — "the Game" — is an unofficial, non-commercial fan work created by fans as a tribute to *Star Wars: Episode IV – A New Hope* (1977).
+*The Battle of Yavin* (Italian: *La Battaglia di Yavin*), "the Game", is an unofficial, non-commercial fan work created by fans as a tribute to *Star Wars: Episode IV – A New Hope* (1977).
 
 The Game, this repository and its contributors are **not affiliated with, associated with, endorsed by, sponsored by, licensed by or approved by** Lucasfilm Ltd., The Walt Disney Company, or any of their subsidiaries, affiliates or licensees (together, "the Rights Holders"). The Game is not an official *Star Wars* product and must not be presented, marketed or perceived as one.
 
 ## 2. Third-party intellectual property
 
-*Star Wars* and all related names, titles, characters, vehicles, starships, places, events, dialogue, designs, logos and indicia — including, without limitation, Luke Skywalker, Biggs Darklighter, Wedge Antilles, Jek Porkins, Darth Vader, Han Solo, Obi-Wan Kenobi, General Dodonna, Grand Moff Tarkin, the X-wing, Y-wing, TIE fighter, TIE Advanced, Millennium Falcon, Star Destroyer, the Death Star, Yavin, and the Battle of Yavin — are trademarks and/or copyrighted works of **Lucasfilm Ltd.** and/or **The Walt Disney Company**. All rights in them are reserved by their respective owners.
+*Star Wars* and all related names, titles, characters, vehicles, starships, places, events, dialogue, designs, logos and indicia, including, without limitation, Luke Skywalker, Biggs Darklighter, Wedge Antilles, Jek Porkins, Darth Vader, Han Solo, Obi-Wan Kenobi, General Dodonna, Grand Moff Tarkin, the X-wing, Y-wing, TIE fighter, TIE Advanced, Millennium Falcon, Star Destroyer, the Death Star, Yavin, and the Battle of Yavin, are trademarks and/or copyrighted works of **Lucasfilm Ltd.** and/or **The Walt Disney Company**. All rights in them are reserved by their respective owners.
 
 The contributors **claim no ownership** of, and no right to license, any of that property. Its use in the Game is limited to:
 
@@ -25,7 +25,7 @@ The contributors consider this use to be a good-faith, non-commercial, transform
 
 Use of these names does not imply any sponsorship or endorsement by, or connection with, the Rights Holders.
 
-## 3. Free forever — no monetisation of any kind
+## 3. Free forever: no monetisation of any kind
 
 The Game is and will remain **completely free**. Neither the contributors nor anyone distributing the Game or a derivative of it may:
 
@@ -53,7 +53,7 @@ The Game is and will remain **completely free**. Neither the contributors nor an
 
 The **original source code** written for this project is licensed under the **PolyForm Noncommercial License 1.0.0** (see [`LICENSE`](LICENSE)), with "The Battle of Yavin contributors" as licensor. That licence permits use, modification and distribution **for non-commercial purposes only**.
 
-**Scope limitation — please read carefully:**
+**Scope limitation, please read carefully:**
 
 - The licence applies **only** to the original source code authored by the contributors.
 - It **does not, and cannot,** grant any right in any trademark, character, name, story element, dialogue or other copyrighted work of Lucasfilm Ltd., The Walt Disney Company or any other third party. The contributors do not own those rights and cannot license them to anyone.
@@ -91,12 +91,12 @@ The Game is built with open-source software. These components are the property o
 
 | Component | Use | Licence |
 |---|---|---|
-| [three.js](https://github.com/mrdoob/three.js) | 3D rendering library, bundled into builds | MIT — Copyright © 2010-2026 three.js authors |
+| [three.js](https://github.com/mrdoob/three.js) | 3D rendering library, bundled into builds | MIT, Copyright © 2010-2026 three.js authors |
 | [@types/three](https://github.com/DefinitelyTyped/DefinitelyTyped) | Type definitions (development only) | MIT |
 | [Vite](https://github.com/vitejs/vite) | Development server and bundler (development only) | MIT |
 | [TypeScript](https://github.com/microsoft/TypeScript) | Compiler / type checker (development only) | Apache License 2.0 |
-| [Orbitron](https://github.com/theleagueof/orbitron) via `@fontsource/orbitron` | Title / HUD font, bundled into builds | SIL Open Font License 1.1 — Copyright © 2018 The Orbitron Project Authors |
-| [News Cycle](https://github.com/googlefonts/NewsCycle) via `@fontsource/news-cycle` | Body / subtitle font, bundled into builds | SIL Open Font License 1.1 — Copyright © the News Cycle Project Authors |
+| [Orbitron](https://github.com/theleagueof/orbitron) via `@fontsource/orbitron` | Title / HUD font, bundled into builds | SIL Open Font License 1.1, Copyright © 2018 The Orbitron Project Authors |
+| [News Cycle](https://github.com/googlefonts/NewsCycle) via `@fontsource/news-cycle` | Body / subtitle font, bundled into builds | SIL Open Font License 1.1, Copyright © the News Cycle Project Authors |
 
 Distributed builds include three.js and the two fonts; anyone distributing a build must include the three.js MIT licence notice and the fonts' OFL notices. Full licence texts are available in each project's repository and in `node_modules/<package>/LICENSE` after installation. All third-party trademarks mentioned (including "three.js", "Vite" and "TypeScript") belong to their respective owners.
 
@@ -125,21 +125,21 @@ By playing, copying, hosting, modifying or distributing the Game you agree that:
 ---
 ---
 
-# Avviso legale — La Battaglia di Yavin
+# Avviso legale: La Battaglia di Yavin
 
 [English](#legal-notice--the-battle-of-yavin--la-battaglia-di-yavin) · **Italiano**
 
 > **In breve:** questo è un **fan game non ufficiale, gratuito e senza scopo di lucro**. **Non** è affiliato, approvato, sponsorizzato né autorizzato da Lucasfilm Ltd. o da The Walt Disney Company. *Star Wars* e tutto ciò che vi è collegato appartiene a loro. Nulla in questo repository è in vendita, né lo sarà mai. La licenza del codice copre **solo** il nostro codice sorgente originale e **non concede alcun diritto** su proprietà di Lucasfilm/Disney. Se i titolari dei diritti ci chiedono di modificare o rimuovere qualcosa, lo faremo tempestivamente.
 
-## 1. Opera amatoriale non ufficiale — nessuna affiliazione
+## 1. Opera amatoriale non ufficiale: nessuna affiliazione
 
-*La Battaglia di Yavin* (in inglese *The Battle of Yavin*) — "il Gioco" — è un'opera amatoriale non ufficiale e senza scopo di lucro, realizzata da fan come omaggio a *Guerre stellari – Episodio IV: Una nuova speranza* (1977).
+*La Battaglia di Yavin* (in inglese *The Battle of Yavin*), "il Gioco", è un'opera amatoriale non ufficiale e senza scopo di lucro, realizzata da fan come omaggio a *Guerre stellari – Episodio IV: Una nuova speranza* (1977).
 
 Il Gioco, questo repository e i suoi contributori **non sono affiliati, associati, approvati, sponsorizzati, concessi in licenza né autorizzati** da Lucasfilm Ltd., The Walt Disney Company o da loro controllate, affiliate o licenziatarie (insieme, "i Titolari dei diritti"). Il Gioco non è un prodotto ufficiale di *Star Wars* e non deve essere presentato, promosso o percepito come tale.
 
 ## 2. Proprietà intellettuale di terzi
 
-*Star Wars* e tutti i nomi, titoli, personaggi, veicoli, astronavi, luoghi, eventi, dialoghi, design, loghi e segni distintivi correlati — tra cui, a titolo esemplificativo, Luke Skywalker, Biggs Darklighter, Wedge Antilles, Jek Porkins, Darth Vader (Dart Fener), Han Solo (Ian Solo), Obi-Wan Kenobi, il Generale Dodonna, il Grand Moff Tarkin, l'X-wing, l'Y-wing, il caccia TIE, il TIE Advanced, il Millennium Falcon, lo Star Destroyer, la Morte Nera, Yavin e la Battaglia di Yavin — sono marchi e/o opere protette da diritto d'autore di **Lucasfilm Ltd.** e/o **The Walt Disney Company**. Tutti i diritti sono riservati ai rispettivi titolari.
+*Star Wars* e tutti i nomi, titoli, personaggi, veicoli, astronavi, luoghi, eventi, dialoghi, design, loghi e segni distintivi correlati, tra cui, a titolo esemplificativo, Luke Skywalker, Biggs Darklighter, Wedge Antilles, Jek Porkins, Darth Vader (Dart Fener), Han Solo (Ian Solo), Obi-Wan Kenobi, il Generale Dodonna, il Grand Moff Tarkin, l'X-wing, l'Y-wing, il caccia TIE, il TIE Advanced, il Millennium Falcon, lo Star Destroyer, la Morte Nera, Yavin e la Battaglia di Yavin, sono marchi e/o opere protette da diritto d'autore di **Lucasfilm Ltd.** e/o **The Walt Disney Company**. Tutti i diritti sono riservati ai rispettivi titolari.
 
 I contributori **non rivendicano alcuna titolarità** né alcun diritto di concedere in licenza tali proprietà. Il loro uso nel Gioco è limitato a:
 
@@ -150,7 +150,7 @@ I contributori ritengono che tale uso sia un uso amatoriale in buona fede, non c
 
 L'uso di questi nomi non implica alcuna sponsorizzazione, approvazione o collegamento con i Titolari dei diritti.
 
-## 3. Gratuito per sempre — nessuna forma di monetizzazione
+## 3. Gratuito per sempre: nessuna forma di monetizzazione
 
 Il Gioco è e resterà **completamente gratuito**. Né i contributori né chiunque distribuisca il Gioco o un'opera derivata possono:
 
@@ -178,7 +178,7 @@ Il Gioco è e resterà **completamente gratuito**. Né i contributori né chiunq
 
 Il **codice sorgente originale** scritto per questo progetto è concesso in licenza secondo la **PolyForm Noncommercial License 1.0.0** (vedi [`LICENSE`](LICENSE)), con licenziante "The Battle of Yavin contributors". La licenza consente l'uso, la modifica e la distribuzione **esclusivamente per scopi non commerciali**.
 
-**Limiti dell'ambito — leggere con attenzione:**
+**Limiti dell'ambito, leggere con attenzione:**
 
 - La licenza si applica **solo** al codice sorgente originale scritto dai contributori.
 - **Non concede, né può concedere,** alcun diritto su marchi, personaggi, nomi, elementi narrativi, dialoghi o altre opere protette di Lucasfilm Ltd., The Walt Disney Company o di qualsiasi altro terzo. I contributori non sono titolari di tali diritti e non possono concederli in licenza a nessuno.
@@ -216,12 +216,12 @@ Il Gioco è realizzato con software open source. Questi componenti appartengono 
 
 | Componente | Uso | Licenza |
 |---|---|---|
-| [three.js](https://github.com/mrdoob/three.js) | Libreria di rendering 3D, inclusa nelle build | MIT — Copyright © 2010-2026 three.js authors |
+| [three.js](https://github.com/mrdoob/three.js) | Libreria di rendering 3D, inclusa nelle build | MIT, Copyright © 2010-2026 three.js authors |
 | [@types/three](https://github.com/DefinitelyTyped/DefinitelyTyped) | Definizioni di tipo (solo sviluppo) | MIT |
 | [Vite](https://github.com/vitejs/vite) | Server di sviluppo e bundler (solo sviluppo) | MIT |
 | [TypeScript](https://github.com/microsoft/TypeScript) | Compilatore / controllo dei tipi (solo sviluppo) | Apache License 2.0 |
-| [Orbitron](https://github.com/theleagueof/orbitron) tramite `@fontsource/orbitron` | Font per titoli / HUD, incluso nelle build | SIL Open Font License 1.1 — Copyright © 2018 The Orbitron Project Authors |
-| [News Cycle](https://github.com/googlefonts/NewsCycle) tramite `@fontsource/news-cycle` | Font per testi / sottotitoli, incluso nelle build | SIL Open Font License 1.1 — Copyright © the News Cycle Project Authors |
+| [Orbitron](https://github.com/theleagueof/orbitron) tramite `@fontsource/orbitron` | Font per titoli / HUD, incluso nelle build | SIL Open Font License 1.1, Copyright © 2018 The Orbitron Project Authors |
+| [News Cycle](https://github.com/googlefonts/NewsCycle) tramite `@fontsource/news-cycle` | Font per testi / sottotitoli, incluso nelle build | SIL Open Font License 1.1, Copyright © the News Cycle Project Authors |
 
 Le build distribuite includono three.js e i due font; chi distribuisce una build deve includere l'avviso della licenza MIT di three.js e gli avvisi OFL dei font. I testi completi delle licenze sono disponibili nei repository dei rispettivi progetti e, dopo l'installazione, in `node_modules/<pacchetto>/LICENSE`. Tutti i marchi di terzi citati (inclusi "three.js", "Vite" e "TypeScript") appartengono ai rispettivi titolari.
 

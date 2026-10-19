@@ -201,7 +201,7 @@ export class Ship implements Targetable {
     _q.setFromEuler(_e);
     this.quat.multiply(_q).normalize();
 
-    // S-foils closed: cruise configuration — cannons offline, slightly faster.
+    // S-foils closed: cruise configuration, cannons offline, slightly faster.
     const target = s.minSpeed + (s.maxSpeed - s.minSpeed) * clamp(this.throttle, 0, 1) + (this.kind === 'xwing' ? (1 - this.sfoils) * 15 : 0);
     const ds = clamp(target - this.speed, -s.accel * dt, s.accel * dt);
     this.speed += ds;

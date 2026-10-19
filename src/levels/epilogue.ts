@@ -1,4 +1,4 @@
-// Epilogue — the Death Star is destroyed. Cinematic, then the throne-room ceremony card.
+// Epilogue, the Death Star is destroyed. Cinematic, then the throne-room ceremony card.
 import * as THREE from 'three';
 import { KinematicBrain } from '../game/ai';
 import type { Script } from '../game/script';

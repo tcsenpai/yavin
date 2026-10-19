@@ -1,7 +1,7 @@
 {
   "name": "yavin",
   "version": "1.0.0",
-  "description": "La Battaglia di Yavin — gioco 3D interamente procedurale (Three.js)",
+  "description": "La Battaglia di Yavin, gioco 3D interamente procedurale (Three.js)",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,4 +1,4 @@
-// Training — a holographic flight course off Yavin 4. Skippable step by step (N) and replayable at any difficulty.
+// Training, a holographic flight course off Yavin 4. Skippable step by step (N) and replayable at any difficulty.
 import * as THREE from 'three';
 import { DogfightBrain, KinematicBrain } from '../game/ai';
 import type { Script } from '../game/script';

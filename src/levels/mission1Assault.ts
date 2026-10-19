@@ -1,4 +1,4 @@
-// Mission 1 — The Assault. One continuous flight: the strike force closes on the Death Star, Red Leader's
+// Mission 1, The Assault. One continuous flight: the strike force closes on the Death Star, Red Leader's
 // orders come over the radio while two Star Destroyers move up to screen the station. Break their shields
 // and bridges, cut down the TIE waves, then follow Red Leader in toward the surface.
 import * as THREE from 'three';
@@ -306,7 +306,7 @@ export const mission1: LevelDef = {
     }
 
     if (ctx.checkpoint >= 1) {
-      // Checkpoint "Star Destroyers": skip the approach — formation already in attack trim, destroyers on station.
+      // Checkpoint "Star Destroyers": skip the approach, formation already in attack trim, destroyers on station.
       for (const i of [0, 1, 2]) ctx.objectives[i].done = true;
       for (const s of [player, lead, ...wing, ...golds]) {
         s.sfoils = s.sfoilTarget = 1;

@@ -190,7 +190,12 @@ export class Hud {
     const x = this.w - w - 30;
     const y = this.h - 260;
     this.panel(x, y, w, 62);
-    this.text(ti.name.toUpperCase(), x + 12, y + 20, 12, RED, 'left', FONT, '700');
+    // Shrink long names (e.g. "Turbolaser battery") so they never run into the distance readout.
+    const name = ti.name.toUpperCase();
+    let size = 12;
+    this.ctx.font = `700 ${size}px ${FONT}`;
+    while (size > 8 && this.ctx.measureText(name).width > w - 90) this.ctx.font = `700 ${--size}px ${FONT}`;
+    this.text(name, x + 12, y + 20, size, RED, 'left', FONT, '700');
     this.text(`${Math.round(ti.distance)} m`, x + w - 12, y + 20, 11, AMBER, 'right', MONO);
     this.bar(x + 12, y + 30, w - 24, 9, ti.hull, ti.shielded ? CYAN : RED);
     if (ti.shielded) this.text(t('hud.shielded'), x + 12, y + 55, 10, CYAN, 'left', FONT, '700');

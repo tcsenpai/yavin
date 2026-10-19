@@ -1,4 +1,4 @@
-// Level 4 — The trench run. Wall guns, Vader and his wingmen, Wedge and Biggs, the Force, the Falcon, the port.
+// Level 4, The trench run. Wall guns, Vader and his wingmen, Wedge and Biggs, the Force, the Falcon, the port.
 import * as THREE from 'three';
 import { KinematicBrain } from '../game/ai';
 import type { Script } from '../game/script';

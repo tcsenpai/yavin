@@ -103,7 +103,7 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
   // now supplies directional ambient (Death Star / Yavin bounce) instead of a flat wash.
   scene.add(new THREE.HemisphereLight(0x5a6c8a, 0x3a2a1c, (opts.ambient ?? 0.55) * 0.6));
   // Viewer fill ("key light from the camera"): keeps black TIE panels and shadowed hulls readable
-  // against black space — the same trick space-combat games use for silhouette legibility.
+  // against black space, the same trick space-combat games use for silhouette legibility.
   const viewFill = new THREE.DirectionalLight(0xbfd2ff, opts.viewFill ?? 0.35);
   scene.add(viewFill, viewFill.target);
 

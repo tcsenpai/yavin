@@ -1,7 +1,7 @@
 // The meridian trench leading to the thermal exhaust port. Runs along -Z from z = 0, centred on x = 0.
 // Geometry is streamed in segments. Walls are built like the film miniature: continuous horizontal ledges (fixed per
-// trench, so they run to the vanishing point) between dense bands of modules — openings to a dark, windowed back
-// wall, recessed lit panels, flush plates, protruding boxes with nested relief — plus vertical ribs and conduits.
+// trench, so they run to the vanishing point) between dense bands of modules, openings to a dark, windowed back
+// wall, recessed lit panels, flush plates, protruding boxes with nested relief, plus vertical ribs and conduits.
 // The floor has wall gutters, conduit runs and equipment plates. Nothing protrudes more than TRENCH_WALL_RELIEF
 // from the wall line or rises more than ~1 m from the floor, so collide() stays a simple box test.
 import * as THREE from 'three';
@@ -107,7 +107,7 @@ export class Trench {
   /**
    * One wall of segment i. The wall is a relief "height field": every module cell contributes its front face and
    * only the step faces where it stands proud of its neighbours. The log depth buffer disables early-z, so hidden
-   * surfaces (a full back plane, box sides buried in neighbours) would cost full shading — they are never emitted.
+   * surfaces (a full back plane, box sides buried in neighbours) would cost full shading, they are never emitted.
    */
   private buildWall(mb: MeshBuilder, i: number, side: number): void {
     const hw = TRENCH_HALF_WIDTH;

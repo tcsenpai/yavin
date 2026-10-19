@@ -1,7 +1,7 @@
 // Infinite, deterministic Death Star surface: chunked greeble city streamed around the camera.
 // heightAt() and the rendered geometry come from the same cell function, so collisions match what you see.
 // Each chunk has a base mesh (architecture, always drawn) and a detail mesh (roof kit, pipes, plates; drawn
-// only near the camera) — the detail parts are all low (≲2 m) so leaving them out of heightAt() is invisible.
+// only near the camera), the detail parts are all low (≲2 m) so leaving them out of heightAt() is invisible.
 import * as THREE from 'three';
 import { hash2 } from '../core/rng';
 import { MeshBuilder } from './meshBuilder';
@@ -225,7 +225,7 @@ export class DeathStarSurface {
       return n;
     }
     if (r2 < 0.5) {
-      // Low slab — sometimes a pair of different heights with a service gap.
+      // Low slab, sometimes a pair of different heights with a service gap.
       const h = 1.5 + r3 * 5;
       if (r5 < 0.4 && bx1 - bx0 > 10) {
         const mid = (bx0 + bx1) / 2;

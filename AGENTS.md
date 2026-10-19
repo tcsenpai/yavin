@@ -27,7 +27,7 @@ myc task create --title "Implement Y" --description "Build the implementation fo
 myc task update 1 --status in_progress
 
 # List tasks. `myc list` (top-level) shows a TREE with dependencies and epic
-# grouping — use it to see the overall state. `myc task list` is a flat list.
+# grouping: use it to see the overall state. `myc task list` is a flat list.
 myc list
 myc task list
 myc task list --epic 1
@@ -45,7 +45,7 @@ myc task search "custom_field"
 myc -q task search "subquery"        # id + title, tab-separated
 myc --format json task search "SP"   # full task objects
 
-# Subtasks (parent/child hierarchy — distinct from epics and dependencies).
+# Subtasks (parent/child hierarchy: distinct from epics and dependencies).
 # Group a family of tasks under a "hat" task without inventing an epic.
 myc task create -t "child task" --parent 1
 myc task update 2 --parent 1   # re-parent existing task (use 0 to detach)
@@ -55,7 +55,7 @@ myc task link blocks --task 1 2
 myc deps show 2
 
 # Non-blocking references between tasks (relates / duplicate). Symmetric,
-# never block or close anything — just mark "these are related / the same".
+# never block or close anything: just mark "these are related / the same".
 myc task link relates 1 2
 myc task link duplicate 1 2
 myc task refs 1               # list a task's references
@@ -89,7 +89,7 @@ myc export csv
 - **Task**: A unit of work with a title and optional description, optionally linked to an epic
 - **Subtask**: A task with a `parent` task (hierarchy). Distinct from epics (one-level grouping) and dependencies (blocking). Closing a parent never auto-closes children.
 - **Dependency**: Task A blocks Task B (B cannot close until A is closed)
-- **Reference**: A non-blocking, symmetric link between two tasks — `relates` (same family) or `duplicate` (same thing). Marks only; never blocks or closes.
+- **Reference**: A non-blocking, symmetric link between two tasks, `relates` (same family) or `duplicate` (same thing). Marks only; never blocks or closes.
 - **Assignee**: Person assigned to a task (can have GitHub username)
 - **External Ref**: Link to GitHub issues/PRs or URLs
 
@@ -110,7 +110,7 @@ prefix so they can't be confused:
 **Input is backward compatible.** Every command still accepts a bare integer
 (`myc task show 3`) *and* the prefixed form (`myc task show T3`,
 case-insensitive). Passing the **wrong** category prefix is a hard error with a
-hint — e.g. `myc task show E3` tells you `E3` is an epic and suggests
+hint, e.g. `myc task show E3` tells you `E3` is an epic and suggests
 `myc epic show E3`. This catches copy/paste mix-ups.
 
 `--format json` output is unchanged: the `id` field stays a raw integer, so
@@ -157,7 +157,7 @@ artifacts (update the binary by hand, then rerun).
 ### Follow-ups (`myc followup`, alias `myc fu`)
 
 Lightweight scratch table for non-blocking "oh-by-the-way" items
-captured mid-work — bugs, questions, ideas, things the user should look
+captured mid-work, bugs, questions, ideas, things the user should look
 at later. **Separate from tasks** (no epic/priority/deps/assignee). Most
 follow-ups are resolved by the user, not the agent.
 
@@ -188,7 +188,7 @@ myc followup snooze [--turns N]             # silence the Stop hook for N stops 
 myc followup snooze --turns 0               # clear an active snooze
 ```
 
-**Agent rule — end-of-task follow-up check** (MANDATORY)
+**Agent rule, end-of-task follow-up check** (MANDATORY)
 
 At the end of every mycelium-tracked unit of work (closing a task,
 finishing a user-requested change that touched myc state), the agent
@@ -197,7 +197,7 @@ MUST:
 1. Run `myc followup list --format json` (or `myc followup count
    --format json`).
 2. If `open > 0`, surface those to the user before wrapping:
-   > "Before we wrap — N open follow-up(s): [titles/bodies]. Want me to
+   > "Before we wrap, N open follow-up(s): [titles/bodies]. Want me to
    > handle any now, or leave for later?"
    Count only `open`, not `active`: `in_progress` items are already
    being worked and don't need an end-of-task decision.
@@ -232,7 +232,7 @@ When working on this project:
 
 ## Mental Frameworks for Mycelium Usage
 
-### 1. INVEST — Task Quality Gate
+### 1. INVEST: Task Quality Gate
 
 Before creating or updating any task, validate it against these criteria.
 A task that fails more than one is not ready to be written.
@@ -250,14 +250,14 @@ A task that fails more than one is not ready to be written.
 
 ---
 
-### 2. DAG — Dependency Graph Thinking
+### 2. DAG: Dependency Graph Thinking
 
 Before scheduling or prioritizing, model the implicit dependency graph.
 
 **Rules:**
 - No task moves to `in_progress` if it has an unresolved upstream blocker
 - Priority is a function of both urgency **and fan-out** (how many tasks does completing this one unlock?)
-- Always work the **critical path** first — not the task that feels most urgent
+- Always work the **critical path** first, not the task that feels most urgent
 
 **Prioritization heuristic:**
 ```
@@ -274,10 +274,10 @@ Set dependency links in Mycelium before touching status.
 Mycelium's state must remain predictable and auditable at all times.
 
 **Rules:**
-- **Prefer idempotent operations** — update before you create; never duplicate
-- **Check before write** — search for an equivalent item before creating a new one
-- **Always annotate mutations** — every status change, priority shift, or reassignment must carry an explicit `reason` field
-- **No orphan tasks** — every task must be linked to an Epic; every Epic to a strategic goal
+- **Prefer idempotent operations**, update before you create; never duplicate
+- **Check before write**, search for an equivalent item before creating a new one
+- **Always annotate mutations**, every status change, priority shift, or reassignment must carry an explicit `reason` field
+- **No orphan tasks**, every task must be linked to an Epic; every Epic to a strategic goal
 - Deletions are a last resort; prefer `cancelled` status with a reason
 
 > The state of Mycelium after any operation must be explainable to another agent with zero context.

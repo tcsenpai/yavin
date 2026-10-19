@@ -1,5 +1,5 @@
-// Mission 2 — Surface Attack. One continuous fight over the Death Star: knock out the turbolaser
-// emplacements and the deflection tower (Porkins' last run), then the TIE fighters scramble —
+// Mission 2, Surface Attack. One continuous fight over the Death Star: knock out the turbolaser
+// emplacements and the deflection tower (Porkins' last run), then the TIE fighters scramble:
 // save Biggs while Gold Squadron and Red Leader make their trench runs over the radio.
 import * as THREE from 'three';
 import { Rng } from '../core/rng';

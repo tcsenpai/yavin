@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mycelium Stop hook — enforce end-of-task follow-up check.
+# Mycelium Stop hook: enforce end-of-task follow-up check.
 #
 # No-op unless the current project is a mycelium project (AGENTS.md
 # carries the myc marker). When open follow-ups exist, it feeds them
@@ -13,7 +13,7 @@
 # Claude Code passes the hook payload as JSON on stdin.
 input=$(cat)
 
-# Loop guard: if this Stop was itself triggered by a Stop hook, bail —
+# Loop guard: if this Stop was itself triggered by a Stop hook, bail;
 # otherwise blocking would re-fire this hook forever.
 if echo "$input" | jq -e '.stop_hook_active == true' >/dev/null 2>&1; then
   exit 0
@@ -47,7 +47,7 @@ grep -q "myc:agents-start" AGENTS.md 2>/dev/null || exit 0
 # Gate 1.5: snooze active? `myc followup snooze` writes a decrementing counter
 # to <project>/.mycelium/.followup-snooze. `myc` resolves the project by walking
 # up from its cwd to the first ancestor holding .mycelium/mycelium.db, so the
-# hook MUST do the same — otherwise a snooze written from a subdir lands in a
+# hook MUST do the same: otherwise a snooze written from a subdir lands in a
 # .mycelium/ the hook never reads, and the check re-nags every stop despite the
 # snooze (the "snooze doesn't stick" bug). Walk up here to match get_db_path().
 snooze_file=""
@@ -80,7 +80,7 @@ command -v myc >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
 # Count OPEN follow-ups only. Per the project rule, `in_progress` items are
-# already being worked and don't need an end-of-task decision — so they must
+# already being worked and don't need an end-of-task decision: so they must
 # NOT trigger the block (matches the `myc task close` close-hint behavior).
 counts=$(myc followup count --format json 2>/dev/null) || exit 0
 open=$(echo "$counts" | jq '(.open // 0)')
@@ -95,7 +95,7 @@ items=$(myc followup list --status open --format json 2>/dev/null \
 jq -n --arg open "$open" --arg items "$items" '{
   decision: "block",
   reason: ("MYCELIUM FOLLOW-UP CHECK: " + $open + " open follow-up(s) exist. " +
-    "Per project rule, surface them to the user before wrapping — never process " +
+    "Per project rule, surface them to the user before wrapping, never process " +
     "silently. Ask whether to handle them now or leave for later.\n\n" +
     "Open follow-ups:\n" + $items)
 }'

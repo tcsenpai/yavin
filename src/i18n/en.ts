@@ -1,10 +1,10 @@
 // English source dictionary. Keys defined here are the canonical StringKey set.
 export const en = {
   // Speakers
-  'spk.luke': 'Red Five — Luke',
-  'spk.biggs': 'Red Three — Biggs',
-  'spk.wedge': 'Red Two — Wedge',
-  'spk.porkins': 'Red Six — Porkins',
+  'spk.luke': 'Red Five · Luke',
+  'spk.biggs': 'Red Three · Biggs',
+  'spk.wedge': 'Red Two · Wedge',
+  'spk.porkins': 'Red Six · Porkins',
   'spk.redLeader': 'Red Leader',
   'spk.red10': 'Red Ten',
   'spk.red7': 'Red Seven',
@@ -22,7 +22,7 @@ export const en = {
   'spk.tarkin': 'Grand Moff Tarkin',
   'spk.dodonna': 'General Dodonna',
   'spk.r2': 'R2-D2',
-  'r2.scream': '(R2-D2 shrieks — then silence)',
+  'r2.scream': '(R2-D2 shrieks, then silence)',
   'r2.worried': '(R2-D2 whistles nervously)',
 
   // Menus
@@ -34,7 +34,7 @@ export const en = {
   'menu.select': 'Missions',
   'menu.settings': 'Settings',
   'menu.controls': 'Controls',
-  'menu.footer': 'Fully procedural fan game — every model, texture and sound is generated in code.',
+  'menu.footer': 'Fully procedural fan game: every model, texture and sound is generated in code.',
   'menu.skip': 'Click / Enter to skip',
   'menu.back': 'Back',
   'menu.play': 'Fly',
@@ -63,7 +63,7 @@ export const en = {
   'set.q.medium': 'Medium',
   'set.q.high': 'High',
 
-  'ctl.mouse': 'Steer (virtual stick — the cursor drifts back to centre)',
+  'ctl.mouse': 'Steer (virtual stick; the cursor drifts back to centre)',
   'ctl.throttle': 'Throttle up / down',
   'ctl.roll': 'Roll left / right',
   'ctl.arrows': 'Pitch and yaw (keyboard)',
@@ -97,7 +97,7 @@ export const en = {
   'hud.sfoils.open': 'attack position',
   'hud.sfoils.closed': 'closed',
   'hud.sfoils.moving': 'moving…',
-  'hud.sfoilsClosed': 'S-FOILS CLOSED — CANNONS OFFLINE (X)',
+  'hud.sfoilsClosed': 'S-FOILS CLOSED: CANNONS OFFLINE (X)',
   'hud.deflectors': 'Deflectors',
   'hud.defl.balanced': 'balanced',
   'hud.defl.front': 'double front',
@@ -121,8 +121,8 @@ export const en = {
   'hint.deflectorsRear': 'Press V until deflectors are double rear',
   'hint.throttle': 'Hold W: accelerate to attack speed',
   'hint.stayInTrench': 'Get back into the trench!',
-  'hint.wrongWay': 'Wrong way — the exhaust port is ahead',
-  'hint.returnBattle': 'Return to the battle — the destroyers are marked',
+  'hint.wrongWay': 'Wrong way! The exhaust port is ahead',
+  'hint.returnBattle': 'Return to the battle. The destroyers are marked',
   'hint.computerOff': 'Press T to switch off your targeting computer… trust the Force',
 
   // Failures
@@ -153,7 +153,7 @@ export const en = {
   'end.medal': 'Luke Skywalker and Han Solo receive the Medal of Bravery. Chewbacca roars. R2-D2, repaired, whistles in triumph.',
   'end.thanks': 'Thank you for flying with Red Squadron. May the Force be with you.',
 
-  // Level 0 — Briefing
+  // Level 0, Briefing
   'l0.title': 'Briefing',
   'l0.sub': 'Massassi temple war room',
   'l0.intro': 'General Dodonna presents the analysis of the stolen technical readouts. Listen carefully, pilot.',
@@ -170,7 +170,7 @@ export const en = {
   'l0.wedge.womprats': 'It’s not impossible. I used to bull’s-eye womp rats in my T-16 back home. They’re not much bigger than two metres.',
   'l0.d.force': 'Then man your ships. And may the Force be with you.',
 
-  // Level 1 — Approach
+  // Level 1, Approach
   'l1.rl.reportIn': 'All wings report in.',
   'l1.red10': 'Red Ten standing by.',
   'l1.red3': 'Red Three standing by.',
@@ -193,14 +193,14 @@ export const en = {
   'ls.base.orders': 'Red Squadron, those destroyers will cut the strike force to pieces. Take out the shield domes on their command towers, then hit the bridges.',
   'ls.gold.cover': 'Gold Squadron will go for the turbolaser batteries. Keep those TIEs off our backs.',
   'ls.biggs.ties': 'TIE fighters coming out of the hangars!',
-  'ls.porkins.flak': 'Heavy fire from those batteries — stay low on their hull, they can’t track you there!',
+  'ls.porkins.flak': 'Heavy fire from those batteries! Stay low on their hull, they can’t track you there!',
   'ls.wedge.gen': 'Shield generator’s down!',
-  'ls.rl.shieldsDown': 'Her deflectors are down — hit the bridge, now!',
+  'ls.rl.shieldsDown': 'Her deflectors are down! Hit the bridge, now!',
   'ls.biggs.bridge': 'Got the bridge! She’s drifting out of formation!',
-  'ls.rl.regroup': 'Both destroyers are out of the fight. Red Squadron, regroup — we’re going in on the surface.',
+  'ls.rl.regroup': 'Both destroyers are out of the fight. Red Squadron, regroup: we’re going in on the surface.',
   'ls.gold.trench': 'Gold Squadron heading for the trench. Draw their fire, Red Leader.',
 
-  // Level 2 — Surface attack
+  // Level 2, Surface attack
   'l2.obj.towers': 'Destroy turbolaser emplacements ({n}/{total})',
   'l2.obj.deflection': 'Destroy the deflection tower',
   'l2.marker.deflection': 'Deflection tower',
@@ -212,17 +212,17 @@ export const en = {
   'l2.biggs.eject': 'Eject!',
   'l2.porkins.hold': 'I can hold it.',
   'l2.biggs.pullUp': 'Pull up!',
-  'l2.porkins.alright': 'No, I’m all right—',
+  'l2.porkins.alright': 'No, I’m all right...',
   'l2.biggs.luke': 'Luke, pull up! Are you all right?',
   'l2.luke.toasted': 'I got a little cooked, but I’m okay.',
   'l2.wedge.goodShot': 'Good shot, Red Five!',
   'l2.base.signals': 'Squad leaders, we’ve picked up a new group of signals. Enemy fighters coming your way.',
 
-  // Level 3 — Dogfight
+  // Level 3, Dogfight
   'l3.obj.biggs': 'Keep Biggs alive',
   'l3.luke.scope': 'My scope’s negative. I don’t see anything.',
   'l3.rl.visual': 'Keep up your visual scanning. With all this jamming, they’ll be on top of you before your scope can pick them up.',
-  'l3.biggs.coming': 'Here they come — TIE fighters, three marks at two-ten!',
+  'l3.biggs.coming': 'Here they come! TIE fighters, three marks at two-ten!',
   'l3.luke.shake': 'I can’t shake him!',
   'l3.wedge.onHim': 'I’m on him, Luke! Hold on!',
   'l3.luke.thanksWedge': 'Thanks, Wedge.',
@@ -235,15 +235,15 @@ export const en = {
   'l3.gold2.tooClose': 'We’re too close!',
   'l3.gold5.stayOn2': 'Stay on target!',
   'l3.gold.loosen': 'Loosen up!',
-  'l3.gold5.behind': 'They came from behind—',
+  'l3.gold5.behind': 'They came from behind...',
   'l3.rl.rendezvous': 'Red Boys, this is Red Leader. Rendezvous at mark six-one. We’re going in.',
   'l3.rl.away': 'It’s away!',
   'l3.red10.negative': 'It’s a hit! … Negative. It didn’t go in. It just impacted on the surface.',
-  'l3.rl.hit': 'Red Leader here — I’m hit… Red Five, it’s up to you—',
+  'l3.rl.hit': 'Red Leader here, I’m hit… Red Five, it’s up to you...',
   'l3.luke.closeUp': 'Red Boys, this is Red Five. Biggs, Wedge, let’s close it up. We’re going in.',
   'l3.wedge.withYou': 'Right with you, boss.',
 
-  // Level 4 — Trench run
+  // Level 4, Trench run
   'l4.title': 'The Trench Run',
   'l4.sub': 'Two metres wide',
   'l4.intro':
@@ -293,7 +293,7 @@ export const en = {
   'l4.luke.inside': 'They’re in! Pulling up!',
   'l4.base.pullOut': 'All fighters, break off and get clear of the station!',
 
-  // Level 5 — Epilogue
+  // Level 5, Epilogue
   'l5.title': 'One in a Million',
   'l5.sub': 'The end of the battle station',
   'l5.intro': 'The torpedoes have gone down the shaft. Clear the Death Star before the reactor goes critical.',
@@ -324,7 +324,7 @@ export const en = {
   'hud.rearView': 'REAR VIEW',
   'hud.autoLevel': 'AUTO-LEVEL',
   'hud.score': 'Score',
-  'hud.shielded': 'DEFLECTOR SHIELD — HIT THE GENERATORS',
+  'hud.shielded': 'DEFLECTOR SHIELD: HIT THE GENERATORS',
   'hud.holdSkip': 'Hold ENTER to skip',
   'hud.prompts': 'Z level · 1–4 throttle · R/G target · B rear view · V deflectors · H HUD',
   'toast.objective': 'Objective complete',
@@ -340,22 +340,22 @@ export const en = {
   'tgt.hangar': 'Hangar bay',
   'tgt.ally': 'Rebel fighter',
 
-  // Mission 1 — The Assault
+  // Mission 1, The Assault
   'm1.title': 'The Assault',
   'm1.sub': 'Red Squadron against the Imperial screen',
   'm1.intro':
-    'Thirty Rebel fighters have launched from Yavin 4. Follow Red Leader’s orders on the way in — report in, S-foils to attack position, deflectors double front.\n\nTwo Star Destroyers have moved up to screen the station. Their bridges sit behind the deflector field of the two shield-generator domes on each command tower: destroy the domes, then the bridges, and shoot down the TIE fighters pouring out of the hangars. Then follow Red Leader in.',
+    'Thirty Rebel fighters have launched from Yavin 4. Follow Red Leader’s orders on the way in: report in, S-foils to attack position, deflectors double front.\n\nTwo Star Destroyers have moved up to screen the station. Their bridges sit behind the deflector field of the two shield-generator domes on each command tower: destroy the domes, then the bridges, and shoot down the TIE fighters pouring out of the hangars. Then follow Red Leader in.',
   'm1.controls': 'Mouse = steer · W/S or 1–4 = throttle · A/D = roll · Z = level the ship · X = S-foils · V = deflectors · R = next target · G = target attacker · F = proton torpedo (hold the target to lock) · B = rear view',
   'm1.obj.report': 'Report in to Red Leader (Enter)',
   'm1.obj.sfoils': 'Lock S-foils in attack position (X)',
   'm1.obj.deflectors': 'Deflectors double front (V)',
   'm1.award.complete': 'Imperial screen broken',
 
-  // Mission 2 — Surface attack
+  // Mission 2, Surface attack
   'm2.title': 'Surface Attack',
-  'm2.sub': 'Draw their fire — then the fighters come',
+  'm2.sub': 'Draw their fire. Then the fighters come',
   'm2.intro':
-    'Red Squadron dives on the Death Star to pin down the turbolaser batteries while Gold Squadron lines up for the trench. Destroy the emplacements and the big deflection tower while flying through the flak.\n\nWhen the TIE fighters scramble, keep them off the squadron — and off Biggs — while Gold Squadron and Red Leader make their runs on the exhaust port.',
+    'Red Squadron dives on the Death Star to pin down the turbolaser batteries while Gold Squadron lines up for the trench. Destroy the emplacements and the big deflection tower while flying through the flak.\n\nWhen the TIE fighters scramble, keep them off the squadron (and off Biggs) while Gold Squadron and Red Leader make their runs on the exhaust port.',
   'm2.award.biggs': 'Biggs saved',
   'm2.award.towers': 'Surface defences suppressed',
   'm3.award.port': 'Direct hit on the exhaust port',
@@ -381,17 +381,17 @@ export const en = {
   'tr.h.roll': 'Roll with A / D',
   'tr.h.level': 'Press Z: the flight assist levels the ship',
   'tr.h.fire': 'Left click / Space to fire the laser cannons',
-  'tr.h.target': 'R to cycle targets — aim at the lead marker, not at the remote',
+  'tr.h.target': 'R to cycle targets. Aim at the lead marker, not at the remote',
   'tr.h.torpedo': 'Keep the remote in the reticle until LOCKED, then press F',
   'tr.h.attacker': 'G targets whoever is shooting you',
   'tr.marker.ring': 'Ring',
   'tr.award.rings': 'Course flown',
   'tr.award.complete': 'Training complete',
   'tr.i.welcome': 'Welcome to the simulator course, Red Five. Let’s see what you can do with a T-65.',
-  'tr.i.rings': 'Fly through the rings. Gentle movements — the stick re-centres on its own.',
+  'tr.i.rings': 'Fly through the rings. Gentle movements: the stick re-centres on its own.',
   'tr.i.throttle': 'Throttle presets: 1 to 4. Full speed for the attack, half for tight turns.',
   'tr.i.level': 'Lost your horizon? Press Z and the flight assist rolls you level.',
-  'tr.i.guns': 'Gunnery. Open your S-foils — the cannons only fire in attack position.',
+  'tr.i.guns': 'Gunnery. Open your S-foils: the cannons only fire in attack position.',
   'tr.i.moving': 'Moving targets. Lead them: put the reticle on the circle ahead of the remote.',
   'tr.i.torpedo': 'Proton torpedoes. Hold the target in your sights until the lock tone, then fire.',
   'tr.i.combat': 'These remotes shoot back. Deflectors double front and watch your scope.',
