@@ -57,6 +57,8 @@ export interface HudState {
   cockpit: boolean;
   torpedoes: number;
   lockProgress: number; // 0..1 torpedo lock
+  /** Laser lock on the selected fighter: 0..1 while acquiring, 1 = locked (lasers guided). */
+  laserLock: number;
   aimPoint: THREE.Vector3 | null;
   showHud: boolean;
   enemyOnTail: boolean;
@@ -494,12 +496,17 @@ export class Hud {
         this.text(`${Math.round(d)} m`, pr.x + r + 6, pr.y - r + 10, 11, RED, 'left', MONO);
       }
     }
-    // Nearby hostile fighters off screen: small red arrows at the screen edge so you always know where they are.
-    for (const sh of s.world.ships) {
-      if (!sh.alive || sh.team !== 'empire' || sh === s.target || sh.pos.distanceTo(player.pos) > 1500) continue;
+    // Nearest hostile fighters off screen (up to 4): small red arrows at the screen edge so you always know where they are.
+    const near = s.world.ships
+      .filter((sh) => sh.alive && sh.team === 'empire' && sh !== s.target && sh.pos.distanceTo(player.pos) < 1500)
+      .sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+    let arrows = 0;
+    for (const sh of near) {
+      if (arrows >= 4) break;
       const pr = this.project(cam, sh.pos);
       if (!pr.behind && pr.x > 0 && pr.y > 0 && pr.x < this.w && pr.y < this.h) continue;
       this.edgeArrow(pr.x, pr.y, pr.behind, 'rgba(255,74,58,0.7)', undefined, 0.6);
+      arrows++;
     }
     const labels: { x: number; y: number }[] = [];
     for (const m of s.markers) {
@@ -546,6 +553,28 @@ export class Hud {
           c.moveTo(lp.x + 6, lp.y);
           c.lineTo(lp.x + 10, lp.y);
           c.stroke();
+        }
+        if (s.laserLock > 0) {
+          // Laser lock: four triangles close in on the target while acquiring; solid red and spinning once locked.
+          const c = this.ctx;
+          const lockedOn = s.laserLock >= 1;
+          const rr = 22 + (1 - s.laserLock) * 26;
+          const spin = lockedOn ? this.time * 1.5 : 0;
+          c.fillStyle = lockedOn ? RED : 'rgba(255,74,58,0.55)';
+          for (let i = 0; i < 4; i++) {
+            const a = spin + (i * Math.PI) / 2 + Math.PI / 4;
+            c.save();
+            c.translate(pr.x + Math.cos(a) * rr, pr.y + Math.sin(a) * rr);
+            c.rotate(a + Math.PI);
+            c.beginPath();
+            c.moveTo(8, 0);
+            c.lineTo(-4, -5);
+            c.lineTo(-4, 5);
+            c.closePath();
+            c.fill();
+            c.restore();
+          }
+          if (lockedOn) this.text(t('hud.laserLock'), pr.x, pr.y - 36, 11, RED, 'center', FONT, '700');
         }
         if (s.lockProgress > 0) {
           const c = this.ctx;

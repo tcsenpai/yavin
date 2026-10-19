@@ -39,14 +39,16 @@ export const HULL_REGEN: Record<Difficulty, { rate: number; delay: number } | nu
 /**
  * Aim assist per difficulty. Only engages when the reticle is already near a target's lead point:
  * `coneDeg` is the base capture cone (plus the target's angular size, shrinking past ~800 m),
- * `friction` slows the stick while on target, `lockTime` is the proton torpedo lock time,
- * `lockSteer`: a completed lock also directs the laser cannons onto the target (Cadet only).
+ * `friction` slows the stick while on target, `lockTime` is the proton torpedo lock time.
+ * `laserLock`: automatic lock on the selected enemy fighter once it has been in view for `delay` s; while
+ * locked, bolts fired within `steerDeg` of the nose are directed onto its lead point. The lock holds until it
+ * leaves the view, another target is selected or the pilot releases it (L). Jedi: no laser lock.
  */
-export const AIM_ASSIST: Record<Difficulty, { coneDeg: number; range: number; friction: number; lockTime: number; lockSteer: boolean }> = {
-  cadet: { coneDeg: 4.5, range: 1500, friction: 0.45, lockTime: 0.7, lockSteer: true },
-  pilot: { coneDeg: 2.8, range: 1250, friction: 0.3, lockTime: 1.0, lockSteer: false },
-  ace: { coneDeg: 1.6, range: 1000, friction: 0.15, lockTime: 1.3, lockSteer: false },
-  jedi: { coneDeg: 0.7, range: 800, friction: 0, lockTime: 1.6, lockSteer: false },
+export const AIM_ASSIST: Record<Difficulty, { coneDeg: number; range: number; friction: number; lockTime: number; laserLock: { delay: number; steerDeg: number } | null }> = {
+  cadet: { coneDeg: 4.5, range: 1500, friction: 0.45, lockTime: 0.7, laserLock: { delay: 0, steerDeg: 25 } },
+  pilot: { coneDeg: 2.8, range: 1250, friction: 0.3, lockTime: 1.0, laserLock: { delay: 1.2, steerDeg: 10 } },
+  ace: { coneDeg: 1.6, range: 1000, friction: 0.15, lockTime: 1.3, laserLock: { delay: 2.2, steerDeg: 5 } },
+  jedi: { coneDeg: 0.7, range: 800, friction: 0, lockTime: 1.6, laserLock: null },
 };
 
 const KEY = 'yavin.settings.v1';

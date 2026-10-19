@@ -289,6 +289,7 @@ export class Menus {
         ['2× A / D · Q / E', 'ctl.evade'],
         ['↑ ↓ ← →', 'ctl.arrows'],
         ['Z', 'ctl.level'],
+        ['L', 'ctl.lock'],
         ['LMB / Space', 'ctl.fire'],
         ['RMB / F', 'ctl.torpedo'],
         ['R', 'ctl.target'],

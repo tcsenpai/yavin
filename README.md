@@ -29,7 +29,7 @@ All captured in-engine (real-time, procedural assets).
 - Arcade flight model with flight assists (auto-level, throttle presets), boost and evasive rolls, deflector shields, S-foils, targeting and a trench-run targeting computer.
 - Cockpit-style HUD: fore and aft sensor scopes, targeting display with target silhouette, range, speed, closing rate and direction.
 - Wingmen and enemy AI with radio chatter shown as subtitles, optionally spoken with the browser's built-in text-to-speech. Wingmen come to your aid when a TIE sits on your tail, and pursuers eventually overshoot.
-- Four difficulty levels with scaled aim assist; on Cadet, TIE fighters are slower and less agile than your X-wing, so you can chase them down.
+- Four difficulty levels with scaled aim assist. A laser lock on the selected enemy fighter guides your shots: instant on Cadet, after a delay on Pilot and Ace, none on Jedi; it holds until the target leaves your view, you pick another target or you release it. On Cadet, TIE fighters are also slower and less agile than your X-wing.
 - Keyboard + mouse and gamepad support.
 - Bilingual **English / Italian**, with an i18n layer ready for more languages.
 
@@ -72,6 +72,7 @@ Aim assist (bolt magnetism, reticle friction, torpedo lock time) scales with dif
 | V | Deflector shields |
 | R | Next target |
 | G | Target whoever is shooting you |
+| L | Release / restore the laser lock on the target |
 | F | Proton torpedo (hold the target to lock) |
 | T | Targeting computer |
 | B (hold) | Rear view |

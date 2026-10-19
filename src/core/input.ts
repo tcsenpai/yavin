@@ -35,7 +35,8 @@ export type Action =
   | 'throttle4'
   | 'skipStep'
   | 'evadeLeft'
-  | 'evadeRight';
+  | 'evadeRight'
+  | 'lock';
 
 const ACTION_KEYS: Record<Action, string[]> = {
   sfoils: ['KeyX'],
@@ -54,6 +55,7 @@ const ACTION_KEYS: Record<Action, string[]> = {
   throttle3: ['Digit3'],
   throttle4: ['Digit4'],
   skipStep: ['KeyN'],
+  lock: ['KeyL'],
   // Triggered by double-tapping the roll keys (see keydown handler), not by a single key.
   evadeLeft: [],
   evadeRight: [],

@@ -191,6 +191,12 @@ export class Game {
   private target: Targetable | null = null;
   private lockT = 0;
   private lockTime = 1;
+  /** Automatic laser lock on an enemy fighter (see AIM_ASSIST.laserLock). */
+  private laserLock: Ship | null = null;
+  private laserAcq = 0;
+  private laserAcqFor: Ship | null = null;
+  /** Target the pilot released by hand: not re-locked until another target is chosen or L is pressed again. */
+  private lockReleased: Targetable | null = null;
   private assisted = false;
   private manualTargetAt = -99;
   private cockpit = false;
@@ -418,6 +424,9 @@ export class Game {
       this.cockpit = false;
       this.deadTime = 0;
       this.lockT = 0;
+      this.laserLock = null;
+      this.laserAcq = 0;
+      this.lockReleased = null;
       this.skipT = 0;
       this.manualTargetAt = -99;
       this.helper = null;
@@ -680,8 +689,8 @@ export class Game {
         const f = prof.friction * (1 - bestK);
         p.ctrl.pitch *= 1 - f;
         p.ctrl.yaw *= 1 - f;
-        // Soft targeting: follow what you're aiming at unless you picked a target recently.
-        if (best !== this.target && ctx.world.time - this.manualTargetAt > 4) this.target = best;
+        // Soft targeting: follow what you're aiming at unless you picked a target recently or hold a laser lock.
+        if (best !== this.target && !this.laserLock && ctx.world.time - this.manualTargetAt > 4) this.target = best;
       }
     }
     const tg = this.target;
@@ -694,9 +703,8 @@ export class Game {
       if (_w.dot(fwd) > hold && d < 1800) this.lockT = Math.min(this.lockTime, this.lockT + dt);
       else this.lockT = Math.max(0, this.lockT - dt * 2);
       locked = this.lockT >= this.lockTime;
-      // Cadet: a full lock also directs the laser cannons onto the locked target's lead point.
-      if (locked && prof.lockSteer && this.settings.aimAssist) aim.copy(tg.pos).addScaledVector(tg.vel, d / p.spec.boltSpeed);
     } else this.lockT = 0;
+    this.updateLaserLock(p, fwd, prof.laserLock, aim, dt);
     this.audio.lockTone(locked && ctx.torpedoes > 0);
 
     if (inp.fire && p.fireCannons(ctx.world, aim)) ctx.stats.shots += 2;
@@ -713,6 +721,58 @@ export class Game {
     }
     // The HUD reticle stays on the fixed convergence point; assist only bends the bolts.
     return p.pos.clone().addScaledVector(fwd, CONVERGENCE);
+  }
+
+  /**
+   * Laser lock: the selected enemy fighter is locked once it has been in view (within ~30° of the nose, under
+   * 1.8 km) for the difficulty's delay; the lock then holds while it stays in view (40°, 2.5 km) and selected.
+   * While locked, bolts fired with the lead point inside `steerDeg` of the nose are directed onto it.
+   */
+  private updateLaserLock(p: Ship, fwd: THREE.Vector3, prof: { delay: number; steerDeg: number } | null, aim: THREE.Vector3, dt: number): void {
+    const tg = this.target;
+    if (this.input.consume('lock')) {
+      if (this.laserLock) {
+        this.lockReleased = this.laserLock;
+        this.laserLock = null;
+        this.laserAcq = 0;
+        this.audio.ui('select');
+      } else this.lockReleased = null;
+    }
+    if (this.lockReleased && this.lockReleased !== tg) this.lockReleased = null;
+    const fighter = tg instanceof Ship && tg.alive && !tg.kinematic && tg.team !== p.team ? tg : null;
+    if (!prof || !this.settings.aimAssist || !fighter || fighter === this.lockReleased) {
+      this.laserLock = null;
+      this.laserAcq = 0;
+      return;
+    }
+    _w.copy(fighter.pos).sub(p.pos);
+    const d = _w.length();
+    const cos = _w.dot(fwd) / Math.max(d, 1);
+    if (this.laserLock === fighter) {
+      if (cos < Math.cos(THREE.MathUtils.degToRad(40)) || d > 2500) {
+        this.laserLock = null;
+        this.laserAcq = 0;
+      }
+    } else {
+      this.laserLock = null;
+      if (this.laserAcqFor !== fighter) {
+        this.laserAcqFor = fighter;
+        this.laserAcq = 0;
+      }
+      const inView = cos > Math.cos(THREE.MathUtils.degToRad(30)) && d < 1800;
+      this.laserAcq = inView ? this.laserAcq + dt : Math.max(0, this.laserAcq - dt * 2);
+      if (inView && this.laserAcq >= prof.delay) {
+        this.laserLock = fighter;
+        this.audio.ui('confirm');
+      }
+    }
+    if (!this.laserLock) return;
+    _v.copy(fighter.pos).addScaledVector(fighter.vel, d / p.spec.boltSpeed);
+    _w.copy(_v).sub(p.pos).normalize();
+    if (_w.dot(fwd) > Math.cos(THREE.MathUtils.degToRad(prof.steerDeg))) {
+      aim.copy(_v);
+      this.assisted = true;
+    }
   }
 
   private updateCamera(ctx: Ctx, dt: number): void {
@@ -931,6 +991,7 @@ export class Game {
         cockpit: this.cockpit && !this.lookBack,
         torpedoes: ctx.torpedoes,
         lockProgress: this.lockT / this.lockTime,
+        laserLock: this.laserLock ? 1 : this.laserAcqFor && this.laserAcqFor === this.target ? Math.min(0.99, this.laserAcq / Math.max(AIM_ASSIST[this.settings.difficulty].laserLock?.delay ?? 1, 0.01)) : 0,
         aimPoint: this.lookBack ? null : aim,
         showHud,
         enemyOnTail: this.enemyOnTail,
