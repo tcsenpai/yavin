@@ -581,7 +581,8 @@ export class Hud {
     const lines = wrap(c, text, maxW - 40);
     const boxH = 40 + lines.length * 23;
     const x = this.w / 2 - maxW / 2;
-    const y = raised ? this.h - 290 - boxH : this.h - 34 - boxH;
+    // With the targeting computer up, the bottom is taken: put subtitles under the countdown timer instead.
+    const y = raised ? 74 : this.h - 34 - boxH;
     const fade = Math.min(1, line.elapsed * 6, (line.duration - line.elapsed) * 4 + 0.3);
     c.globalAlpha = clamp(fade, 0, 1);
     c.fillStyle = line.ghost ? 'rgba(20,40,70,0.35)' : 'rgba(6,8,12,0.62)';

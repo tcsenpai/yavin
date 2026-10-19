@@ -594,11 +594,15 @@ export class Game {
     if (tg?.alive) {
       const d = tg.pos.distanceTo(p.pos);
       _w.copy(tg.pos).sub(p.pos).normalize();
-      if (_w.dot(fwd) > 0.992 && d < 1800 && ctx.torpedoes > 0) this.lockT = Math.min(this.lockTime, this.lockT + dt);
+      // Acquire inside a tight cone; once locked, hold the lock through a wider one.
+      const hold = this.lockT >= this.lockTime ? 0.94 : 0.992;
+      if (_w.dot(fwd) > hold && d < 1800) this.lockT = Math.min(this.lockTime, this.lockT + dt);
       else this.lockT = Math.max(0, this.lockT - dt * 2);
       locked = this.lockT >= this.lockTime;
+      // Cadet: a full lock also directs the laser cannons onto the locked target's lead point.
+      if (locked && prof.lockSteer && this.settings.aimAssist) aim.copy(tg.pos).addScaledVector(tg.vel, d / p.spec.boltSpeed);
     } else this.lockT = 0;
-    this.audio.lockTone(locked);
+    this.audio.lockTone(locked && ctx.torpedoes > 0);
 
     if (inp.fire && p.fireCannons(ctx.world, aim)) ctx.stats.shots += 2;
     if (inp.torpedo && !ctx.onTorpedo?.()) {

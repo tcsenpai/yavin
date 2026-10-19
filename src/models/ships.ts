@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { getPanelTextures, getPlumeAlphaTexture, getSolarPanelTexture, mulberry32, type PanelStyle } from './textures';
+import { getPanelTextures, getSolarPanelTextures, mulberry32, type PanelStyle } from './textures';
 
 // =====================================================================================
 // Public API
@@ -72,22 +72,144 @@ function alignM(a: V3, b: V3): { m: THREE.Matrix4; len: number } {
   return { m: new THREE.Matrix4().compose(va.add(vb).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1)), len };
 }
 
+/**
+ * Far-LOD build mode (see `buildLow`): no chamfers, ~half the radial segments on smooth parts,
+ * and parts smaller than `LOW_CULL` (bounding radius, m) dropped. Builders are deterministic, so
+ * a low build reproduces the exact high-detail layout.
+ */
+let lowDetail = false;
+const LOW_CULL = 0.09;
+/** Emissive / glass slots are never culled from the far LOD (tiny lights must stay visible). */
+const LOW_KEEP = new Set(['impGlow', 'r2light', 'glass']);
+function buildLow<T>(fn: () => T): T {
+  lowDetail = true;
+  try {
+    return fn();
+  } finally {
+    lowDetail = false;
+  }
+}
+
+/**
+ * Solid of revolution around Y through a (r, y) profile, one lathe band per profile segment so
+ * every crease (cap edge, chamfer) stays crisp. Walk the profile with the solid on the left
+ * (bottom cap outwards, side upwards, top cap inwards) for outward normals. `seg <= 8` → flat shaded.
+ */
+function lathe(profile: V2[], seg: number): THREE.BufferGeometry {
+  const bands: THREE.BufferGeometry[] = [];
+  const n = lowDetail && seg > 8 ? Math.max(8, Math.round(seg / 2)) : seg;
+  for (let i = 0; i < profile.length - 1; i++) {
+    const [r0, y0] = profile[i];
+    const [r1, y1] = profile[i + 1];
+    if ((r0 < 1e-6 && r1 < 1e-6) || (Math.abs(r1 - r0) < 1e-7 && Math.abs(y1 - y0) < 1e-7)) continue;
+    const g = new THREE.LatheGeometry([new THREE.Vector2(r0, y0), new THREE.Vector2(r1, y1)], n).toNonIndexed();
+    g.deleteAttribute('uv');
+    if (seg <= 8) g.computeVertexNormals();
+    if (r0 < 1e-6 || r1 < 1e-6) {
+      // fan bands: LatheGeometry emits one zero-area triangle per segment at the axis
+      const p = g.getAttribute('position').array;
+      const n = g.getAttribute('normal').array;
+      const keepP: number[] = [];
+      const keepN: number[] = [];
+      for (let t = 0; t < p.length; t += 9) {
+        const ux = p[t + 3] - p[t], uy = p[t + 4] - p[t + 1], uz = p[t + 5] - p[t + 2];
+        const vx = p[t + 6] - p[t], vy = p[t + 7] - p[t + 1], vz = p[t + 8] - p[t + 2];
+        const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+        if (cx * cx + cy * cy + cz * cz < 1e-14) continue;
+        for (let k = 0; k < 9; k++) {
+          keepP.push(p[t + k]);
+          keepN.push(n[t + k]);
+        }
+      }
+      g.setAttribute('position', new THREE.Float32BufferAttribute(keepP, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(keepN, 3));
+    }
+    bands.push(g);
+  }
+  return mergeGeometries(bands);
+}
+
+/**
+ * Chamfered cylinder along Y (rBot at -h/2, rTop at +h/2). `c` = chamfer size; by default a
+ * small bevel on smooth (≥ 12 segment) parts big enough for it to show (r ≥ 9 cm).
+ */
+function cyl(rBot: number, rTop: number, h: number, seg = 16, open = false, c = seg >= 12 && Math.min(rBot, rTop) >= 0.09 ? Math.min(rBot, rTop, h) * 0.12 : 0): THREE.BufferGeometry {
+  const y = h / 2;
+  if (open) return lathe([[rBot, -y], [rTop, y]], seg);
+  if (c <= 1e-5 || lowDetail) return lathe([[0, -y], [rBot, -y], [rTop, y], [0, y]], seg);
+  return lathe([[0, -y], [rBot - c, -y], [rBot, -y + c], [rTop, y - c], [rTop - c, y], [0, y]], seg);
+}
+
 /** Cylinder along Z: r0 at the -Z end, r1 at the +Z end. */
 function cylZ(r0: number, r1: number, len: number, seg = 16, open = false): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(r1, r0, len, seg, 1, open).rotateX(Math.PI / 2);
+  return cyl(r0, r1, len, seg, open).rotateX(Math.PI / 2);
 }
 function cylX(r: number, len: number, seg = 16): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(r, r, len, seg).rotateZ(Math.PI / 2);
+  return cyl(r, r, len, seg).rotateZ(Math.PI / 2);
 }
 function cylY(rTop: number, rBot: number, h: number, seg = 16): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(rTop, rBot, h, seg);
+  return cyl(rBot, rTop, h, seg);
 }
-function box(w: number, h: number, d: number): THREE.BufferGeometry {
-  return new THREE.BoxGeometry(w, h, d);
+
+/**
+ * Hollow nozzle along Z (exit at +Z): outer wall rOut0 (front) → rOut1 (exit), lip, inner wall of
+ * radius rIn running `depth` back into the part. Origin at the exit plane.
+ */
+function nozzleShell(rOut0: number, rOut1: number, rIn: number, len: number, depth: number, seg = 24): THREE.BufferGeometry {
+  const lip = Math.min(rOut1 - rIn, len) * 0.35;
+  return lathe([
+    [0, -len], [rOut0, -len], [rOut1, -lip], [rOut1 - lip, 0], [rIn, 0], [rIn, -depth], [0, -depth],
+  ], seg).rotateX(Math.PI / 2);
+}
+
+/** Chamfered box (bevelled edges catch highlights): 6 faces + 12 edge bevels + 8 corner facets. Plain below 3.5 cm. */
+function box(w: number, h: number, d: number, c = Math.min(w, h, d) >= 0.035 ? Math.min(w, h, d) * 0.12 : 0): THREE.BufferGeometry {
+  if (c <= 1e-5 || lowDetail) return new THREE.BoxGeometry(w, h, d);
+  const half = [w / 2, h / 2, d / 2];
+  const P = (s: number[], axis: number): V3 => [0, 1, 2].map((i) => (i === axis ? s[i] * half[i] : s[i] * (half[i] - c))) as V3;
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const poly = (pts: V3[]): void => {
+    const a = new THREE.Vector3(...pts[0]);
+    const n = new THREE.Vector3(...pts[1]).sub(a).cross(new THREE.Vector3(...pts[2]).sub(a)).normalize();
+    const cen = new THREE.Vector3();
+    for (const p of pts) cen.add(_p.set(...p));
+    if (n.dot(cen) < 0) {
+      pts.reverse();
+      n.negate();
+    }
+    for (let i = 1; i < pts.length - 1; i++) {
+      for (const p of [pts[0], pts[i], pts[i + 1]]) {
+        pos.push(...p);
+        nor.push(n.x, n.y, n.z);
+      }
+    }
+  };
+  const ring: V2[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  for (let a = 0; a < 3; a++) {
+    const b = (a + 1) % 3, e = (a + 2) % 3;
+    for (const sa of [-1, 1]) {
+      // main face on ±a
+      poly(ring.map(([sb, se]) => { const s = [0, 0, 0]; s[a] = sa; s[b] = sb; s[e] = se; return P(s, a); }));
+    }
+    // bevels of the 4 edges running along a
+    for (const [sb, se] of ring) {
+      const s0 = [0, 0, 0], s1 = [0, 0, 0];
+      s0[a] = -1; s1[a] = 1;
+      s0[b] = s1[b] = sb;
+      s0[e] = s1[e] = se;
+      poly([P(s0, b), P(s1, b), P(s1, e), P(s0, e)]);
+    }
+  }
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) poly([P([sx, sy, sz], 0), P([sx, sy, sz], 1), P([sx, sy, sz], 2)]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return g;
 }
 /** Octagonal prism along Y with flat faces facing ±X/±Z. */
 function oct8(rTop: number, rBot: number, h: number): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(rTop, rBot, h, 8, 1).rotateY(Math.PI / 8);
+  return cyl(rBot, rTop, h, 8, false, Math.min(rTop, rBot, h) * 0.06).rotateY(Math.PI / 8);
 }
 
 interface Section { z: number; pts: V2[] }
@@ -226,6 +348,115 @@ function boxUV(pos: Float32Array, tile: number): Float32Array {
   return uv;
 }
 
+/** Bare-metal weight per painted slot (drives metalness/roughness in the paint shader); default 0 = paint. */
+const SLOT_METAL: Record<string, number> = { metal: 1, dark: 0.35 };
+
+/** Cosine-weighted hemisphere directions (z-up, flat xyz triples) for AO rays. */
+const AO_DIRS: Float32Array = (() => {
+  const N = 10;
+  const out = new Float32Array(N * 3);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let k = 0; k < N; k++) {
+    const r = Math.sqrt((k + 0.5) / N) * 0.97;
+    out.set([r * Math.cos(k * golden), r * Math.sin(k * golden), Math.sqrt(1 - r * r)], k * 3);
+  }
+  return out;
+})();
+/** Ray sample distances in voxels and the matching occlusion weights (near hits count more). */
+const AO_STEPS = [1.2, 2.4, 4, 6.5, 10.5];
+const AO_WEIGHTS = AO_STEPS.map((s) => 1 - (s / AO_STEPS[AO_STEPS.length - 1]) * 0.45);
+
+/**
+ * Per-vertex ambient occlusion (1 = open, 0 = buried) for a set of non-indexed triangle soups:
+ * the triangles are rasterised into a voxel shell (~80 cells along the longest axis) and short
+ * cosine-weighted rays are marched from every unique (position, normal) vertex.
+ */
+function bakeAO(list: { pos: Float32Array; nor: Float32Array }[]): Float32Array[] {
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (const { pos } of list) {
+    for (let i = 0; i < pos.length; i += 3) {
+      for (let a = 0; a < 3; a++) {
+        lo[a] = Math.min(lo[a], pos[i + a]);
+        hi[a] = Math.max(hi[a], pos[i + a]);
+      }
+    }
+  }
+  const vs = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 1e-3) / 80;
+  const inv = 1 / vs;
+  const pad = Math.ceil(AO_STEPS[AO_STEPS.length - 1] + 3);
+  const ox = lo[0] - pad * vs, oy = lo[1] - pad * vs, oz = lo[2] - pad * vs;
+  const nx = Math.ceil((hi[0] - lo[0]) * inv) + pad * 2 + 1;
+  const ny = Math.ceil((hi[1] - lo[1]) * inv) + pad * 2 + 1;
+  const nz = Math.ceil((hi[2] - lo[2]) * inv) + pad * 2 + 1;
+  const nxy = nx * ny;
+  const grid = new Uint8Array(nxy * nz);
+  for (const { pos } of list) {
+    for (let t = 0; t < pos.length; t += 9) {
+      // work in voxel space
+      const ax = (pos[t] - ox) * inv, ay = (pos[t + 1] - oy) * inv, az = (pos[t + 2] - oz) * inv;
+      const ux = (pos[t + 3] - ox) * inv - ax, uy = (pos[t + 4] - oy) * inv - ay, uz = (pos[t + 5] - oz) * inv - az;
+      const wx = (pos[t + 6] - ox) * inv - ax, wy = (pos[t + 7] - oy) * inv - ay, wz = (pos[t + 8] - oz) * inv - az;
+      const L = Math.max(Math.hypot(ux, uy, uz), Math.hypot(wx, wy, wz), Math.hypot(ux - wx, uy - wy, uz - wz));
+      const n = Math.max(1, Math.ceil(L / 0.7));
+      for (let i = 0; i <= n; i++) {
+        const s = i / n;
+        for (let j = 0; j <= n - i; j++) {
+          const q = j / n;
+          grid[((ax + ux * s + wx * q) | 0) + ((ay + uy * s + wy * q) | 0) * nx + ((az + uz * s + wz * q) | 0) * nxy] = 1;
+        }
+      }
+    }
+  }
+  const nDirs = AO_DIRS.length / 3;
+  const cache = new Map<number, number>();
+  return list.map(({ pos, nor }) => {
+    const ao = new Float32Array(pos.length / 3);
+    for (let v = 0; v < ao.length; v++) {
+      const i = v * 3;
+      let nxv = nor[i], nyv = nor[i + 1], nzv = nor[i + 2];
+      const nl = Math.hypot(nxv, nyv, nzv);
+      if (nl < 1e-4) {
+        ao[v] = 1;
+        continue;
+      }
+      nxv /= nl; nyv /= nl; nzv /= nl;
+      const px = (pos[i] - ox) * inv, py = (pos[i + 1] - oy) * inv, pz = (pos[i + 2] - oz) * inv;
+      // shared vertices (same quantised position + normal) are traced once
+      const key = (Math.round(px * 64) * 73856093) ^ (Math.round(py * 64) * 19349663) ^ (Math.round(pz * 64) * 83492791) ^ (Math.round(nxv * 15) * 2654435761) ^ (Math.round(nyv * 15) * 40503) ^ (Math.round(nzv * 15) * 97);
+      const hit = cache.get(key);
+      if (hit !== undefined) {
+        ao[v] = hit;
+        continue;
+      }
+      // tangent frame
+      let ax = 0, ay = 0, az = 0;
+      if (Math.abs(nxv) < 0.9) { ay = nzv; az = -nyv; } else { ax = -nzv; az = nxv; }
+      const al = Math.hypot(ax, ay, az);
+      ax /= al; ay /= al; az /= al;
+      const bx = nyv * az - nzv * ay, by = nzv * ax - nxv * az, bz = nxv * ay - nyv * ax;
+      const sx = px + nxv * 1.2, sy = py + nyv * 1.2, sz = pz + nzv * 1.2;
+      let occ = 0;
+      for (let d = 0; d < nDirs; d++) {
+        const dx = AO_DIRS[d * 3], dy = AO_DIRS[d * 3 + 1], dz = AO_DIRS[d * 3 + 2];
+        const rx = ax * dx + bx * dy + nxv * dz;
+        const ry = ay * dx + by * dy + nyv * dz;
+        const rz = az * dx + bz * dy + nzv * dz;
+        for (let k = 0; k < AO_STEPS.length; k++) {
+          const st = AO_STEPS[k];
+          if (grid[((sx + rx * st) | 0) + ((sy + ry * st) | 0) * nx + ((sz + rz * st) | 0) * nxy]) {
+            occ += AO_WEIGHTS[k];
+            break;
+          }
+        }
+      }
+      ao[v] = 1 - occ / nDirs;
+      cache.set(key, ao[v]);
+    }
+    return ao;
+  });
+}
+
 /** Collects transformed parts per material slot and merges them into one geometry per slot. */
 class PartBuilder {
   private readonly slots = new Map<string, THREE.BufferGeometry[]>();
@@ -238,6 +469,10 @@ class PartBuilder {
     g.clearGroups();
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     if (m) transformGeo(g, m);
+    if (lowDetail && !LOW_KEEP.has(slot)) {
+      g.computeBoundingSphere();
+      if ((g.boundingSphere?.radius ?? 1) < LOW_CULL) return this;
+    }
     this.push(slot, g);
     return this;
   }
@@ -267,42 +502,57 @@ class PartBuilder {
   /**
    * Merges every slot into one geometry. Slots listed in `paint` are collapsed into a single
    * 'paint' geometry carrying a linear vertex-colour attribute (one draw call for all painted
-   * hull parts, rendered with a vertexColors panel material).
+   * hull parts, rendered with a vertexColors panel material) plus `aSurf` = (baked AO, bare-metal
+   * weight) read by the paint shader.
    */
   finish(tile: number, paint: Record<string, THREE.ColorRepresentation> = {}): Parts {
-    const groups = new Map<string, { geos: THREE.BufferGeometry[]; colors: (THREE.Color | null)[] }>();
+    const groups = new Map<string, { geos: THREE.BufferGeometry[]; colors: (THREE.Color | null)[]; metal: number[] }>();
+    const all: THREE.BufferGeometry[] = [];
     for (const [slot, list] of this.slots) {
       const painted = slot in paint;
       const key = painted ? 'paint' : slot;
       const color = painted ? new THREE.Color(paint[slot]) : null;
       let grp = groups.get(key);
       if (!grp) {
-        grp = { geos: [], colors: [] };
+        grp = { geos: [], colors: [], metal: [] };
         groups.set(key, grp);
       }
       for (const g of list) {
         grp.geos.push(g);
         grp.colors.push(color);
+        grp.metal.push(SLOT_METAL[slot] ?? 0);
+        all.push(g);
       }
     }
+    const paintGeos = groups.get('paint')?.geos;
+    const aoOf = new Map<THREE.BufferGeometry, Float32Array>();
+    if (paintGeos) {
+      const aos = bakeAO(all.map((g) => ({ pos: g.getAttribute('position').array as Float32Array, nor: g.getAttribute('normal').array as Float32Array })));
+      all.forEach((g, i) => aoOf.set(g, aos[i]));
+    }
     const out: Parts = new Map();
-    for (const [key, { geos, colors }] of groups) {
+    for (const [key, { geos, colors, metal }] of groups) {
       let count = 0;
       for (const g of geos) count += g.getAttribute('position').count;
       const pos = new Float32Array(count * 3);
       const nor = new Float32Array(count * 3);
       const col = key === 'paint' ? new Float32Array(count * 3) : null;
+      const surf = key === 'paint' ? new Float32Array(count * 2) : null;
       let o = 0;
       geos.forEach((g, i) => {
         const p = g.getAttribute('position');
         pos.set(p.array as ArrayLike<number>, o);
         nor.set(g.getAttribute('normal').array as ArrayLike<number>, o);
         const c = colors[i];
-        if (col && c) {
-          for (let k = o; k < o + p.count * 3; k += 3) {
+        if (col && surf && c) {
+          const ao = aoOf.get(g);
+          for (let v = 0; v < p.count; v++) {
+            const k = o + v * 3;
             col[k] = c.r;
             col[k + 1] = c.g;
             col[k + 2] = c.b;
+            surf[(k / 3) * 2] = ao ? ao[v] : 1;
+            surf[(k / 3) * 2 + 1] = metal[i];
           }
         }
         o += p.count * 3;
@@ -312,6 +562,7 @@ class PartBuilder {
       geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       geo.setAttribute('uv', new THREE.BufferAttribute(boxUV(pos, tile), 2));
       if (col) geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      if (surf) geo.setAttribute('aSurf', new THREE.BufferAttribute(surf, 2));
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
       out.set(key, geo);
@@ -344,6 +595,24 @@ function addParts(parent: THREE.Object3D, parts: Parts, mats: Record<string, THR
   }
 }
 
+/** Distance (m) beyond which fighters switch to their `buildLow` geometry. */
+const FIGHTER_LOD_DIST = 90;
+
+/** High/low part sets of one rigid assembly. */
+type LodParts = [Parts, Parts];
+
+/** Adds a two-level LOD: `levels[0]` near, `levels[1]` from `dist` metres on. */
+function addLodParts(parent: THREE.Object3D, levels: LodParts, mats: Record<string, THREE.Material>, dist = FIGHTER_LOD_DIST): void {
+  const lod = new THREE.LOD();
+  lod.name = 'lod';
+  levels.forEach((parts, i) => {
+    const g = new THREE.Group();
+    addParts(g, parts, mats);
+    lod.addLevel(g, i * dist, 0.1);
+  });
+  parent.add(lod);
+}
+
 function empty(parent: THREE.Object3D, name: string, x: number, y: number, z: number): THREE.Object3D {
   const o = new THREE.Object3D();
   o.name = name;
@@ -367,10 +636,12 @@ function cachedMat<T extends THREE.Material>(key: string, make: () => T): T {
   return m;
 }
 
-function panelMat(key: string, color: THREE.ColorRepresentation, style: PanelStyle, roughness: number, metalness: number, bumpScale = 1, side: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial {
+function panelMat(key: string, color: THREE.ColorRepresentation, style: PanelStyle, side: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial {
   return cachedMat(`panel:${key}`, () => {
     const t = getPanelTextures(style);
-    return new THREE.MeshStandardMaterial({ color, map: t.map, bumpMap: t.bumpMap, bumpScale, roughness, metalness, side });
+    return new THREE.MeshStandardMaterial({
+      color, map: t.map, normalMap: t.normalMap, roughnessMap: t.ormMap, metalnessMap: t.ormMap, aoMap: t.ormMap, roughness: 1, metalness: 1, side,
+    });
   });
 }
 
@@ -383,18 +654,41 @@ function glowMat(key: string, color: THREE.ColorRepresentation, intensity: numbe
   return cachedMat(`glow:${key}`, () => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity) }));
 }
 
-/** Vertex-coloured panel material used by every 'paint' geometry (colour comes from the palette). */
-function paintMat(style: PanelStyle, roughness: number, metalness: number, bumpScale = 0.8): THREE.MeshStandardMaterial {
-  return cachedMat(`paint:${style}:${roughness}:${metalness}:${bumpScale}`, () => {
+/**
+ * Paint shader patch: `aSurf.x` = baked vertex AO (occludes indirect light fully, direct light
+ * a little), `aSurf.y` = bare-metal weight (metal/dark slots → metallic, smoother).
+ */
+function patchPaintShader(shader: THREE.WebGLProgramParametersWithUniforms): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute vec2 aSurf;\nvarying vec2 vSurf;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = aSurf;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;')
+    .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= mix(1.0, vSurf.x, 0.45);')
+    .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, 0.6, vSurf.y);\nroughnessFactor = mix(roughnessFactor, roughnessFactor * 0.8, vSurf.y);')
+    .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= vSurf.x;\nreflectedLight.indirectSpecular *= mix(1.0, vSurf.x, 0.75);');
+}
+
+/** Vertex-coloured PBR panel material used by every 'paint' geometry (colour comes from the palette). */
+function paintMat(style: PanelStyle, roughMul = 1, normalScale = 1): THREE.MeshStandardMaterial {
+  return cachedMat(`paint:${style}:${roughMul}:${normalScale}`, () => {
     const t = getPanelTextures(style);
-    return new THREE.MeshStandardMaterial({ vertexColors: true, map: t.map, bumpMap: t.bumpMap, bumpScale, roughness, metalness });
+    const m = new THREE.MeshStandardMaterial({
+      vertexColors: true, map: t.map, normalMap: t.normalMap, normalScale: new THREE.Vector2(normalScale, normalScale),
+      roughnessMap: t.ormMap, metalnessMap: t.ormMap, aoMap: t.ormMap, roughness: roughMul, metalness: 1,
+    });
+    m.onBeforeCompile = patchPaintShader;
+    return m;
   });
 }
 
 const C_DARK = 0x1a1b1e;
 const C_METAL = 0x6e7176;
 const C_R2_WHITE = 0xe6e7ea;
-const glassMat = (): THREE.Material => cachedMat('glass', () => new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 0.06, metalness: 0.85, emissive: 0x020406 }));
+/** Cockpit transparency: dark tinted glass under a mirror-smooth clearcoat. */
+const glassMat = (): THREE.Material => cachedMat('glass', () => new THREE.MeshPhysicalMaterial({
+  color: 0x070a0e, roughness: 0.18, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03, ior: 1.5, specularIntensity: 1, emissive: 0x03060a, envMapIntensity: 1.4,
+}));
 const r2LightMat = (): THREE.Material => glowMat('r2light', 0xff3020, 3);
 const impGlowMat = (): THREE.Material => glowMat('imperialCannon', 0x4dff6a, 2.6);
 
@@ -402,19 +696,174 @@ const impGlowMat = (): THREE.Material => glowMat('imperialCannon', 0x4dff6a, 2.6
 // Engine glow (per-instance materials so throttle/flicker are independent per ship)
 // =====================================================================================
 
+/** Glow profile ring: [z or radius, radius, intensity, whiteness, t]. */
+type GlowRing = [number, number, number, number, number];
+
+/**
+ * Surface of revolution around Z through glow rings [z, r, intensity, whiteness, t]; carries
+ * `aGlow` = (t, intensity, whiteness, kind 0) for the glow shaders.
+ */
+function glowTube(rings: GlowRing[], seg = 20): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const glow: number[] = [];
+  const slope = (i: number): number => {
+    const a = rings[Math.max(0, i - 1)], b = rings[Math.min(rings.length - 1, i + 1)];
+    return (b[1] - a[1]) / (b[0] - a[0] || 1);
+  };
+  const vert = (i: number, k: number): void => {
+    const [z, r, I, W, t] = rings[i];
+    const th = (k / seg) * Math.PI * 2;
+    const c = Math.cos(th), s = Math.sin(th);
+    pos.push(r * c, r * s, z);
+    const n = new THREE.Vector3(c, s, -slope(i)).normalize();
+    nor.push(n.x, n.y, n.z);
+    glow.push(t, I, W, 0);
+  };
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let k = 0; k < seg; k++) {
+      vert(i, k); vert(i + 1, k); vert(i + 1, k + 1);
+      vert(i, k); vert(i + 1, k + 1); vert(i, k + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('aGlow', new THREE.Float32BufferAttribute(glow, 4));
+  return g;
+}
+
+/** Disc facing +Z at `z` through radial rings [radius, -, intensity, whiteness, t]; aGlow.w = `kind`. */
+function glowDisc(rings: GlowRing[], z: number, kind: number, seg = 24): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const glow: number[] = [];
+  const vert = (i: number, k: number): void => {
+    const [r, , I, W, t] = rings[i];
+    const th = (k / seg) * Math.PI * 2;
+    pos.push(r * Math.cos(th), r * Math.sin(th), z);
+    glow.push(t, I, W, kind);
+  };
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let k = 0; k < seg; k++) {
+      vert(i, k); vert(i + 1, k); vert(i + 1, k + 1);
+      vert(i, k); vert(i + 1, k + 1); vert(i, k + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+  g.setAttribute('aGlow', new THREE.Float32BufferAttribute(glow, 4));
+  return g;
+}
+
+/**
+ * Nozzle interior (radius 1, exit plane z = 0, facing +Z): glowing inner wall `depth` deep that
+ * brightens inwards, ending in a white-hot core disc. depth 0 = flush disc only.
+ */
+function coreGeometry(depth: number, seg = 24): THREE.BufferGeometry {
+  const disc = glowDisc([[0, 0, 1.6, 0.8, 0], [0.55, 0, 1.25, 0.45, 0.5], [1, 0, 0.95, 0.15, 1]], -depth, 0, seg);
+  if (depth <= 0) return disc;
+  return mergeGeometries([disc, glowTube([[-depth, 1, 0.95, 0.15, 0], [-depth * 0.4, 1, 0.6, 0.05, 0], [0, 1, 0.28, 0, 0]], seg)]);
+}
+
+/**
+ * Layered exhaust (base radius 1 at z = 0, pointing +Z, unit length): soft outer sheath, short
+ * white-hot inner cone and a rear-facing halo disc.
+ */
+function plumeGeometry(r = 1, len = 1, seg = 20): THREE.BufferGeometry {
+  const outer = glowTube([[0, r, 0.85, 0.1, 0], [len * 0.15, r * 1.04, 0.85, 0.08, 0.15], [len * 0.4, r * 0.9, 0.85, 0.04, 0.4], [len * 0.7, r * 0.7, 0.85, 0, 0.7], [len, r * 0.5, 0.85, 0, 1]], seg);
+  const inner = glowTube([[0, r * 0.62, 1.1, 0.6, 0], [len * 0.14, r * 0.46, 1.1, 0.5, 0.4], [len * 0.32, r * 0.05, 1.1, 0.3, 1]], seg);
+  const halo = glowDisc([[0, 0, 0.8, 0.4, 0], [r * 0.9, 0, 0.5, 0.1, 0.45], [r * 2, 0, 0, 0, 1]], 0.002 * len, 1, seg);
+  return mergeGeometries([outer, inner, halo]);
+}
+
+const _coreGeos = new Map<number, THREE.BufferGeometry>();
+const coreGeo = (depth: number): THREE.BufferGeometry => {
+  let g = _coreGeos.get(depth);
+  if (!g) {
+    g = coreGeometry(depth);
+    _coreGeos.set(depth, g);
+  }
+  return g;
+};
 let _plumeGeo: THREE.BufferGeometry | null = null;
-let _coreGeo: THREE.BufferGeometry | null = null;
-/** Open cone, base (radius 1) at z = 0, tip at z = +1. */
-const plumeGeo = (): THREE.BufferGeometry => (_plumeGeo ??= new THREE.ConeGeometry(1, 1, 20, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2));
-/** Unit disc facing +Z. */
-const coreGeo = (): THREE.BufferGeometry => (_coreGeo ??= new THREE.CircleGeometry(1, 24));
+
+const GLOW_VERT = /* glsl */ `
+#include <common>
+#include <fog_pars_vertex>
+#include <logdepthbuf_pars_vertex>
+attribute vec4 aGlow;
+varying vec4 vGlow;
+varying vec3 vN;
+varying vec3 vV;
+void main() {
+  vGlow = aGlow;
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vN = normalize(normalMatrix * normal);
+  vV = -mvPosition.xyz;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <logdepthbuf_vertex>
+  #include <fog_vertex>
+}`;
+
+const GLOW_FRAG = /* glsl */ `
+uniform vec3 uColor;
+varying vec4 vGlow;
+varying vec3 vN;
+varying vec3 vV;
+#include <common>
+#include <fog_pars_fragment>
+#include <logdepthbuf_pars_fragment>
+void main() {
+  #include <logdepthbuf_fragment>
+  float t = clamp(vGlow.x, 0.0, 1.0);
+  float a = vGlow.y;
+#ifdef PLUME
+  float facing = abs(dot(normalize(vN), normalize(vV)));
+  if (vGlow.w > 0.5) a *= (1.0 - t) * (1.0 - t) * mix(0.25, 1.0, facing);
+  else a *= pow(1.0 - t, 1.9) * pow(facing, 1.6);
+#endif
+  vec3 c = uColor * a;
+  float m = max(c.r, max(c.g, c.b));
+  c = mix(c, vec3(m), clamp(vGlow.z, 0.0, 1.0));
+  gl_FragColor = vec4(c, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`;
+
+function glowShader(plume: boolean): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color() }, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+    vertexShader: GLOW_VERT,
+    fragmentShader: GLOW_FRAG,
+    defines: plume ? { PLUME: '' } : {},
+    fog: true,
+    side: THREE.DoubleSide,
+    transparent: plume,
+    blending: plume ? THREE.AdditiveBlending : THREE.NormalBlending,
+    depthWrite: !plume,
+  });
+}
+
+/** Adds `aGlow` (vertical gradient, hottest on the y = 0 centreline) to an arbitrary emitter mesh. */
+function withStripGlow(g: THREE.BufferGeometry, halfH: number): THREE.BufferGeometry {
+  const p = g.getAttribute('position');
+  const a = new Float32Array(p.count * 4);
+  for (let i = 0; i < p.count; i++) {
+    const e = Math.min(1, Math.abs(p.getY(i)) / halfH);
+    a.set([e, 1.45 - 0.6 * e, 0.45 * (1 - e), 0], i * 4);
+  }
+  g.setAttribute('aGlow', new THREE.BufferAttribute(a, 4));
+  return g;
+}
 
 /** `r === 0` marks a merged plume mesh (absolute radii baked in, only its length scales). */
 interface Plume { mesh: THREE.Mesh; len: number; r: number }
 
 class EngineGlow {
-  readonly core: THREE.MeshBasicMaterial;
-  readonly plume: THREE.MeshBasicMaterial;
+  readonly core: THREE.ShaderMaterial;
+  readonly plume: THREE.ShaderMaterial;
   private readonly base: THREE.Color;
   private readonly plumes: Plume[] = [];
   private throttle = 0.5;
@@ -423,26 +872,22 @@ class EngineGlow {
 
   constructor(color: number, private readonly coreGain: number, private readonly plumeGain: number) {
     this.base = new THREE.Color(color);
-    this.core = new THREE.MeshBasicMaterial({ color: this.base.clone() });
-    this.plume = new THREE.MeshBasicMaterial({
-      color: this.base.clone(),
-      alphaMap: getPlumeAlphaTexture(),
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
+    this.core = glowShader(false);
+    this.plume = glowShader(true);
     this.apply();
   }
 
-  /** Glowing nozzle disc facing +Z at (x, y, z) plus an optional additive plume trailing to +Z. */
-  addNozzle(parent: THREE.Object3D, x: number, y: number, z: number, radius: number, plumeLen: number): void {
-    const c = new THREE.Mesh(coreGeo(), this.core);
+  /**
+   * Glowing nozzle interior (exit plane at (x, y, z), facing +Z, recessed `depth` × radius into
+   * the part) plus an optional additive plume trailing to +Z.
+   */
+  addNozzle(parent: THREE.Object3D, x: number, y: number, z: number, radius: number, plumeLen: number, depth = 0): void {
+    const c = new THREE.Mesh(coreGeo(depth), this.core);
     c.position.set(x, y, z);
     c.scale.setScalar(radius);
     parent.add(c);
     if (plumeLen > 0) {
-      const p = new THREE.Mesh(plumeGeo(), this.plume);
+      const p = new THREE.Mesh((_plumeGeo ??= plumeGeometry()), this.plume);
       p.position.set(x, y, z + 0.005);
       p.renderOrder = 10;
       parent.add(p);
@@ -451,14 +896,14 @@ class EngineGlow {
     this.apply();
   }
 
-  /** Arbitrary glowing mesh sharing the core material (e.g. the Falcon's engine strip). */
+  /** Arbitrary glowing mesh (must carry `aGlow`) sharing the core material (e.g. the Falcon's engine strip). */
   addCoreMesh(parent: THREE.Object3D, geo: THREE.BufferGeometry, x = 0, y = 0, z = 0): void {
     const c = new THREE.Mesh(geo, this.core);
     c.position.set(x, y, z);
     parent.add(c);
   }
 
-  /** Pre-merged plume cones (bases at local z = 0, pointing +Z, unit length = full plume) placed at `z`. */
+  /** Pre-merged plumes (from `plumeGeometry`, bases at local z = 0, pointing +Z, full length) placed at `z`. */
   addMergedPlume(parent: THREE.Object3D, geo: THREE.BufferGeometry, z: number): void {
     const p = new THREE.Mesh(geo, this.plume);
     p.position.z = z;
@@ -488,8 +933,8 @@ class EngineGlow {
   private apply(): void {
     const th = this.throttle;
     const k = (0.3 + 0.9 * th) * this.flick;
-    this.core.color.copy(this.base).multiplyScalar(this.coreGain * k);
-    this.plume.color.copy(this.base).multiplyScalar(this.plumeGain * k);
+    (this.core.uniforms.uColor.value as THREE.Color).copy(this.base).multiplyScalar(this.coreGain * k);
+    (this.plume.uniforms.uColor.value as THREE.Color).copy(this.base).multiplyScalar(this.plumeGain * k);
     const L = (0.25 + 0.95 * th) * this.flick;
     const rs = 0.85 + 0.25 * th;
     for (const p of this.plumes) {
@@ -657,6 +1102,31 @@ function buildXWingFuselage(): PartBuilder {
   // ventral detail
   b.add('hullDark', box(0.6, 0.06, 1.6), M(0, -0.49, 1.5));
   b.add('hullDark', box(0.3, 0.05, 0.9), M(0, -0.42, -1.2));
+
+  // rear fuselage side greebles: vent grilles, access hatches, conduits (mirrored)
+  const rng = mulberry32(6502);
+  for (const s of [-1, 1]) {
+    const w = xwP(2.4).w;
+    for (let i = 0; i < 6; i++) b.add('dark', box(0.03, 0.035, 0.42), M(s * (w + 0.005), 0.26 - i * 0.065, 1.35));
+    b.add('hullDark', box(0.05, 0.36, 0.5), M(s * (w + 0.012), 0.1, 1.35));
+    b.add('hullDark', box(0.04, 0.22, 1.1), M(s * (w + 0.01), -0.18, 3.05));
+    b.rod('metal', [s * (w + 0.02), 0.32, 0.9], [s * (w + 0.02), 0.32, 4.3], 0.022, 0.022, 6);
+    b.rod('metal', [s * (w + 0.02), -0.33, 2.0], [s * (w + 0.02), -0.33, 4.4], 0.018, 0.018, 6);
+    for (let i = 0; i < 5; i++) {
+      const z = 0.7 + rng() * 3.5;
+      const bw = 0.08 + rng() * 0.14, bh = 0.05 + rng() * 0.1;
+      b.add(rng() < 0.5 ? 'metal' : 'hullDark', box(0.035, bh, bw), M(s * (w + 0.015), -0.3 + rng() * 0.55, z));
+    }
+    // forward fuselage: sensor windows and a hatch outline near the nose
+    const pn = xwP(-6.3);
+    b.add('dark', box(0.02, 0.05, 0.22), M(s * (pn.w - 0.005), 0.0, -6.3, 0, s * 0.08, 0));
+    const pc = xwP(-4.2);
+    b.add('hullDark', box(0.02, 0.14, 0.6), M(s * (pc.w + 0.004), -0.05, -4.2, 0, s * 0.07, 0));
+  }
+  // dorsal spine fittings behind the astromech
+  for (let i = 0; i < 4; i++) b.add('hullDark', box(0.36, 0.04, 0.12), M(0, 0.535, 1.6 + i * 0.75));
+  b.add('metal', cylY(0.06, 0.07, 0.12, 12), M(0.14, 0.58, 2.2));
+  b.add('metal', cylY(0.05, 0.06, 0.1, 12), M(-0.16, 0.57, 3.9));
   return b;
 }
 
@@ -674,19 +1144,31 @@ function buildXWingWingBase(): PartBuilder {
   // flap / control panel lines in relief
   b.add('hullDark', box(2.6, 0.112, 0.05), M(2.6, 0, TE - 0.6));
 
-  // engine
+  // engine: recessed intake with fan + spinner, ribbed body, hollow exhaust nozzle
   const EX = XW_ENGINE_X, EY = XW_ENGINE_Y;
-  b.add('hull', cylZ(0.47, 0.47, 0.45, 24), M(EX, EY, 0.83));
-  b.add('dark', new THREE.CircleGeometry(0.4, 24).rotateY(Math.PI), M(EX, EY, 0.6));
-  b.add('metal', new THREE.ConeGeometry(0.13, 0.28, 16).rotateX(-Math.PI / 2), M(EX, EY, 0.46));
+  b.add('hull', nozzleShell(0.47, 0.47, 0.4, 0.45, 0.25), M(EX, EY, 0.605, 0, Math.PI, 0));
+  b.add('dark', new THREE.CircleGeometry(0.4, 24), M(EX, EY, 0.85, 0, Math.PI, 0));
+  b.add('metal', cyl(0.0, 0.14, 0.32, 16).rotateX(Math.PI / 2), M(EX, EY, 0.68));
+  for (let k = 0; k < 14; k++) {
+    const a = (k / 14) * Math.PI * 2;
+    b.add('metal', box(0.07, 0.26, 0.018, 0.004), new THREE.Matrix4().makeRotationZ(a - Math.PI / 2).multiply(new THREE.Matrix4().makeRotationY(0.5)).setPosition(EX + 0.26 * Math.cos(a), EY + 0.26 * Math.sin(a), 0.8));
+  }
   b.add('hull', cylZ(0.43, 0.41, 3.2, 24), M(EX, EY, 2.65));
   for (const z of [1.75, 3.5]) b.add('hullDark', cylZ(0.445, 0.445, 0.12, 24), M(EX, EY, z));
-  b.add('metal', cylZ(0.4, 0.34, 0.5, 24), M(EX, EY, 4.5));
-  b.add('dark', cylZ(0.3, 0.3, 0.02, 20), M(EX, EY, 4.755));
-  for (const a of [0.5, 1.9, 2.8]) {
+  for (const z of [1.25, 2.4, 4.05]) b.add('hullDark', cylZ(0.432, 0.432, 0.035, 24), M(EX, EY, z));
+  b.add('metal', nozzleShell(0.4, 0.35, 0.3, 0.5, 0.27), M(EX, EY, XW_NOZZLE_Z));
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + 0.3;
+    b.add('hullDark', box(0.07, 0.05, 0.22), M(EX + 0.4 * Math.cos(a), EY + 0.4 * Math.sin(a), 4.38, 0, 0, a));
+  }
+  for (const a of [0.5, 1.9, 2.8, 3.6, 5.2]) {
     const px = EX + 0.445 * Math.cos(a);
     const py = EY + 0.445 * Math.sin(a);
-    b.rod('metal', [px, py, 1.15], [px, py, 4.15], 0.035, 0.035, 8);
+    b.rod('metal', [px, py, 1.15], [px, py, 4.15], a > 3 ? 0.025 : 0.035, a > 3 ? 0.025 : 0.035, 8);
+  }
+  // outboard engine greebles (fuel cells / coolant boxes)
+  for (const [a, z, l] of [[0.0, 2.1, 0.5], [0.0, 3.0, 0.35], [-0.6, 2.6, 0.7], [0.9, 1.5, 0.4]]) {
+    b.add('hullDark', box(0.09, 0.14, l), M(EX + 0.44 * Math.cos(a), EY + 0.44 * Math.sin(a), z, 0, 0, a));
   }
   b.add('hullDark', box(0.5, 0.06, 2.4), M(EX + 0.05, 0.05, 2.7));
 
@@ -705,21 +1187,27 @@ function buildXWingWingBase(): PartBuilder {
   return b;
 }
 
-interface XWParts { fuselage: Parts; wings: Parts[]; astromech: Parts }
-let xwBuilders: { fuselage: PartBuilder; wing: PartBuilder; astromech: PartBuilder } | null = null;
+interface XWParts { fuselage: LodParts; wings: LodParts[]; astromech: LodParts }
+type XWBuilders = { fuselage: PartBuilder; wing: PartBuilder; astromech: PartBuilder };
+let xwBuilders: [XWBuilders, XWBuilders] | null = null;
 const xwPartsByColor = new Map<string, XWParts>();
 
 function getXWingParts(stripe: number, r2: number): XWParts {
   const key = `${stripe}:${r2}`;
   let parts = xwPartsByColor.get(key);
   if (parts) return parts;
-  const src = (xwBuilders ??= { fuselage: buildXWingFuselage(), wing: buildXWingWingBase(), astromech: buildAstromech() });
+  const build = (): XWBuilders => ({ fuselage: buildXWingFuselage(), wing: buildXWingWingBase(), astromech: buildAstromech() });
+  const [hi, lo] = (xwBuilders ??= [build(), buildLow(build)]);
   const palette = { hull: 0xd8d6cf, hullDark: 0x8b8a85, stripe, metal: C_METAL, dark: C_DARK };
+  const r2Palette = { r2white: C_R2_WHITE, r2blue: r2, metal: C_METAL, dark: C_DARK };
   parts = {
-    fuselage: src.fuselage.finish(3, palette),
+    fuselage: [hi.fuselage.finish(3, palette), lo.fuselage.finish(3, palette)],
     // order: top-right, top-left, bottom-right, bottom-left
-    wings: [IDENT, MX, MY, MXY].map((m) => new PartBuilder().addBuilder(src.wing, m).finish(3, palette)),
-    astromech: src.astromech.finish(3, { r2white: C_R2_WHITE, r2blue: r2, metal: C_METAL, dark: C_DARK }),
+    wings: [IDENT, MX, MY, MXY].map((m): LodParts => [
+      new PartBuilder().addBuilder(hi.wing, m).finish(3, palette),
+      new PartBuilder().addBuilder(lo.wing, m).finish(3, palette),
+    ]),
+    astromech: [hi.astromech.finish(3, r2Palette), lo.astromech.finish(3, r2Palette)],
   };
   xwPartsByColor.set(key, parts);
   return parts;
@@ -728,14 +1216,14 @@ function getXWingParts(stripe: number, r2: number): XWParts {
 export function createXWing(opts?: { stripeColor?: number; astromechColor?: number }): XWingModel {
   const parts = getXWingParts(opts?.stripeColor ?? 0xb0282a, opts?.astromechColor ?? 0x2a4fa8);
   const mats: Record<string, THREE.Material> = {
-    paint: paintMat('fighter', 0.6, 0.15),
+    paint: paintMat('fighter'),
     glass: glassMat(),
     r2light: r2LightMat(),
   };
 
   const root = new THREE.Group();
   root.name = 'XWing';
-  addParts(root, parts.fuselage, mats);
+  addLodParts(root, parts.fuselage, mats);
 
   const glow = new EngineGlow(0xff5a2a, 1.9, 0.9);
   const defs = [
@@ -750,9 +1238,9 @@ export function createXWing(opts?: { stripeColor?: number; astromechColor?: numb
     const w = new THREE.Group();
     w.name = `wing_${d.my > 0 ? 'top' : 'bottom'}_${d.mx > 0 ? 'right' : 'left'}`;
     w.position.set(d.mx * XW_HINGE_X, d.my * XW_HINGE_Y, 0);
-    addParts(w, parts.wings[i], mats);
+    addLodParts(w, parts.wings[i], mats);
     cannonMuzzles.push(empty(w, 'muzzle', d.mx * XW_CANNON_X, 0, XW_MUZZLE_Z));
-    glow.addNozzle(w, d.mx * XW_ENGINE_X, d.my * XW_ENGINE_Y, XW_NOZZLE_Z, 0.3, 2.2);
+    glow.addNozzle(w, d.mx * XW_ENGINE_X, d.my * XW_ENGINE_Y, XW_NOZZLE_Z, 0.29, 2.2, 0.9);
     root.add(w);
     wings.push(w);
   });
@@ -762,7 +1250,7 @@ export function createXWing(opts?: { stripeColor?: number; astromechColor?: numb
   const astromech = new THREE.Group();
   astromech.name = 'astromech';
   astromech.position.set(0, xwP(XW_R2_Z).yt - 0.01, XW_R2_Z);
-  addParts(astromech, parts.astromech, mats);
+  addLodParts(astromech, parts.astromech, mats);
   root.add(astromech);
 
   const cockpitAnchor = empty(root, 'cockpitAnchor', 0, 0.66, -1.05);
@@ -850,7 +1338,7 @@ function buildYWing(): PartBuilder {
   const pipes: [number, number, number][] = [[0.33, 0.17, 0.06], [-0.33, 0.17, 0.06], [0.33, -0.2, 0.07], [-0.33, -0.2, 0.05], [0, 0.29, 0.07], [0.18, -0.29, 0.045]];
   for (const [x, y, r] of pipes) b.rod('metal', [x, y, -2.7], [x, y, 5.4], r, r, 8);
   for (let z = -2.2; z <= 5.2; z += 0.9) b.add('frame', box(0.82, 0.68, 0.1), M(0, 0, z));
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 44; i++) {
     const side = rng() < 0.5 ? -1 : 1;
     const top = rng() < 0.4;
     const w = 0.1 + rng() * 0.25, h = 0.08 + rng() * 0.2, l = 0.2 + rng() * 0.8;
@@ -881,13 +1369,19 @@ function buildYWing(): PartBuilder {
   h.add('stripe', cylZ(0.56, 0.56, 0.14, 24), M(X, 0, -0.4));
   for (const z of [1.0, 3.5, 4.6]) h.add('hullDark', cylZ(0.57, 0.57, 0.1, 24), M(X, 0, z));
   h.add('frame', cylZ(0.5, 0.44, 1.0, 20), M(X, 0, 5.6));
-  h.add('metal', cylZ(0.3, 0.3, 1.2, 16), M(X, 0, 6.7));
+  h.add('metal', cylZ(0.3, 0.3, 0.8, 16), M(X, 0, 6.5));
+  h.add('metal', nozzleShell(0.38, 0.38, 0.33, 0.42, 0.4), M(X, 0, YW_NOZZLE_Z));
+  // nacelle fittings: access panels, sensor boxes, coolant lines
+  for (const [a, z, l] of [[1.57, 0.2, 0.9], [1.57, 2.6, 0.6], [0.0, 1.6, 1.3], [0.0, 3.9, 0.5], [-1.2, 2.2, 0.8], [2.3, 4.1, 0.45], [-2.4, 0.6, 0.7]]) {
+    h.add('hullDark', box(0.2, 0.1, l), M(X + 0.56 * Math.cos(a), 0.56 * Math.sin(a), z, 0, 0, a - Math.PI / 2));
+  }
+  for (const z of [2.0, 2.15, 2.3]) h.add('dark', cylZ(0.555, 0.555, 0.03, 24), M(X, 0, z));
   for (let k = 0; k < 6; k++) {
     const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
     h.rod('metal', [X + 0.46 * Math.cos(a), 0.46 * Math.sin(a), 6.05], [X + 0.4 * Math.cos(a), 0.4 * Math.sin(a), 7.35], 0.04, 0.04, 6);
   }
   h.add('metal', new THREE.TorusGeometry(0.4, 0.045, 6, 20), M(X, 0, 7.35));
-  h.add('dark', cylZ(0.36, 0.36, 0.06, 18), M(X, 0, 7.27));
+  h.add('metal', cylZ(0.45, 0.45, 0.06, 20), M(X, 0, 6.0));
   for (const a of [0.4, 1.4, 2.6]) {
     const px = X + 0.57 * Math.cos(a), py = 0.57 * Math.sin(a);
     h.rod('metal', [px, py, -0.1], [px, py, 4.8], 0.04, 0.04, 6);
@@ -897,24 +1391,24 @@ function buildYWing(): PartBuilder {
   return b;
 }
 
-let ywBuilder: PartBuilder | null = null;
-const ywPartsByColor = new Map<number, Parts>();
+let ywBuilders: [PartBuilder, PartBuilder] | null = null;
+const ywPartsByColor = new Map<number, LodParts>();
 
 export function createYWing(opts?: { stripeColor?: number }): GunShipModel {
   const stripe = opts?.stripeColor ?? 0xc9a227;
   let parts = ywPartsByColor.get(stripe);
   if (!parts) {
-    parts = (ywBuilder ??= buildYWing()).finish(3, {
-      hull: 0xcfcbbf, hullDark: 0x8a877f, frame: 0x75736d, stripe, metal: C_METAL, dark: C_DARK, r2white: C_R2_WHITE, r2blue: 0x2a4fa8,
-    });
+    const palette = { hull: 0xcfcbbf, hullDark: 0x8a877f, frame: 0x75736d, stripe, metal: C_METAL, dark: C_DARK, r2white: C_R2_WHITE, r2blue: 0x2a4fa8 };
+    const [hi, lo] = (ywBuilders ??= [buildYWing(), buildLow(buildYWing)]);
+    parts = [hi.finish(3, palette), lo.finish(3, palette)];
     ywPartsByColor.set(stripe, parts);
   }
   const root = new THREE.Group();
   root.name = 'YWing';
-  addParts(root, parts, { paint: paintMat('freighter', 0.64, 0.18), glass: glassMat(), r2light: r2LightMat() });
+  addLodParts(root, parts, { paint: paintMat('freighter'), glass: glassMat(), r2light: r2LightMat() });
 
   const glow = new EngineGlow(0xff5a2a, 1.8, 0.85);
-  for (const s of [-1, 1]) glow.addNozzle(root, s * YW_NACELLE_X, 0, YW_NOZZLE_Z, 0.34, 2.6);
+  for (const s of [-1, 1]) glow.addNozzle(root, s * YW_NACELLE_X, 0, YW_NOZZLE_Z, 0.32, 2.6, 1.2);
   const cannonMuzzles = [-1, 1].map((s) => empty(root, 'muzzle', s * 0.24, -0.2, YW_MUZZLE_Z));
   return {
     root,
@@ -944,6 +1438,16 @@ function buildTIE(): Parts {
   // rear engine panel + vents
   b.add('hullDark', cylZ(0.62, 0.55, 0.2, 24), M(0, 0, R - 0.06));
   for (const y of [-0.3, 0.3]) b.add('dark', box(0.6, 0.08, 0.04), M(0, y, R + 0.05));
+  // equatorial service hatches / vents around the ball
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2 + 0.31;
+    if (Math.abs(Math.sin(a)) > 0.93) continue; // keep the pylon roots clear
+    const n = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
+    if (n.z < -0.55) continue; // front window
+    const m = new THREE.Matrix4().lookAt(new THREE.Vector3(), n, new THREE.Vector3(0, 1, 0)).setPosition(n.multiplyScalar(R - 0.01));
+    b.add(k % 2 ? 'hullDark' : 'dark', box(0.28, 0.12, 0.06), m);
+  }
+  for (const y of [-0.55, 0.55]) b.add('hullDark', new THREE.TorusGeometry(Math.sqrt(R * R - y * y) + 0.005, 0.022, 4, 48).rotateX(Math.PI / 2), M(0, y, 0));
   // chin cannons
   for (const s of [-1, 1]) {
     b.add('hullDark', box(0.2, 0.2, 0.42), M(s * 0.3, -0.8, -0.72));
@@ -954,7 +1458,8 @@ function buildTIE(): Parts {
   // starboard pylon + wing (mirrored to port)
   const h = new PartBuilder();
   const WX = TIE_WING_X;
-  h.add('hull', new THREE.CylinderGeometry(0.5, 0.3, 1.95, 16).rotateZ(-Math.PI / 2), M(1.98, 0, 0));
+  h.add('hull', cyl(0.3, 0.5, 1.95, 16).rotateZ(-Math.PI / 2), M(1.98, 0, 0));
+  for (const x of [1.55, 1.85, 2.15]) h.add('hullDark', cylX(0.3 + ((x - 1.0) / 1.95) * 0.2 + 0.02, 0.05, 16), M(x, 0, 0));
   h.add('hullDark', cylX(0.42, 0.16, 16), M(1.12, 0, 0));
   h.add('hullDark', cylX(0.62, 0.12, 16), M(2.62, 0, 0));
   for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
@@ -963,6 +1468,11 @@ function buildTIE(): Parts {
   }
   h.add('hull', cylX(0.8, 0.38, 6), M(WX, 0, 0, Math.PI / 6));
   h.add('hullDark', cylX(0.52, 0.2, 6), M(WX + 0.26, 0, 0, Math.PI / 6));
+  h.add('hullDark', cylX(0.52, 0.2, 6), M(WX - 0.26, 0, 0, Math.PI / 6));
+  for (let k = 0; k < 6; k++) {
+    const a = (k * Math.PI) / 3;
+    for (const sx of [-1, 1]) h.add('metal', cylX(0.06, 0.06, 8), M(WX + sx * 0.2, 0.62 * Math.cos(a), 0.62 * Math.sin(a)));
+  }
   const hex: V2[] = [];
   for (let k = 0; k < 6; k++) {
     const a = Math.PI / 2 + (k * Math.PI) / 3;
@@ -971,16 +1481,23 @@ function buildTIE(): Parts {
   h.add('solar', slabYZ(hex, 0.08), M(WX, 0, 0));
   for (let k = 0; k < 6; k++) {
     const p = hex[k], q = hex[(k + 1) % 6];
-    h.beam('hull', [WX, p[1], p[0]], [WX, q[1], q[0]], 0.24, 0.2, 0.1);
-    h.beam('hullDark', [WX, p[1] * 0.55, p[0] * 0.55], [WX, q[1] * 0.55, q[0] * 0.55], 0.13, 0.07, 0.03);
-    h.beam('hull', [WX, p[1] * 0.2, p[0] * 0.2], [WX, p[1] * 0.97, p[0] * 0.97], 0.2, 0.15);
+    const at = (f: number): [V3, V3] => [[WX, p[1] * f, p[0] * f], [WX, q[1] * f, q[0] * f]];
+    // stepped outer frame (thick rim + inner lip)
+    h.beam('hull', ...at(1), 0.34, 0.22, 0.12);
+    h.beam('hullDark', ...at(0.945), 0.2, 0.09, 0.04);
+    // sector struts
+    h.beam('hullDark', ...at(0.55), 0.16, 0.08, 0.03);
+    for (const f of [0.33, 0.78]) h.beam('hullDark', ...at(f), 0.12, 0.045, 0.02);
+    // main radial spar: core + raised cap on both faces
+    h.beam('hull', [WX, p[1] * 0.2, p[0] * 0.2], [WX, p[1] * 0.97, p[0] * 0.97], 0.26, 0.16);
+    h.beam('hullDark', [WX, p[1] * 0.24, p[0] * 0.24], [WX, p[1] * 0.93, p[0] * 0.93], 0.34, 0.07);
   }
   b.addBuilder(h, IDENT);
   b.addBuilder(h, MX);
   return b.finish(3, imperialPalette(0x939ba4));
 }
 
-let tieParts: Parts | null = null;
+let tieParts: LodParts | null = null;
 
 function imperialPalette(hull: number): Record<string, number> {
   return { hull, hullDark: 0x464b52, metal: C_METAL, dark: C_DARK };
@@ -988,18 +1505,21 @@ function imperialPalette(hull: number): Record<string, number> {
 
 function imperialMats(): Record<string, THREE.Material> {
   return {
-    paint: paintMat('imperial', 0.5, 0.32, 0.7),
-    solar: cachedMat('tie_solar', () => new THREE.MeshStandardMaterial({ color: 0xffffff, map: getSolarPanelTexture(), roughness: 0.35, metalness: 0.45 })),
+    paint: paintMat('imperial', 1, 0.8),
+    solar: cachedMat('tie_solar', () => {
+      const t = getSolarPanelTextures();
+      return new THREE.MeshStandardMaterial({ map: t.map, normalMap: t.normalMap, roughnessMap: t.ormMap, metalnessMap: t.ormMap, aoMap: t.ormMap, roughness: 1, metalness: 1 });
+    }),
     glass: glassMat(),
     impGlow: impGlowMat(),
   };
 }
 
 export function createTIEFighter(): GunShipModel {
-  const parts = (tieParts ??= buildTIE());
+  const parts = (tieParts ??= [buildTIE(), buildLow(buildTIE)]);
   const root = new THREE.Group();
   root.name = 'TIEFighter';
-  addParts(root, parts, imperialMats());
+  addLodParts(root, parts, imperialMats());
   const glow = new EngineGlow(0x7dff9a, 0.66, 0);
   for (const s of [-1, 1]) glow.addNozzle(root, s * 0.22, 0, TIE_R + 0.045, 0.13, 0);
   const cannonMuzzles = [-1, 1].map((s) => empty(root, 'muzzle', s * 0.3, -0.8, -1.4));
@@ -1019,6 +1539,8 @@ export function createTIEFighter(): GunShipModel {
 const TA_R = 1.0;
 const TA_CZ = -2.6;
 const TA_WING_X = 3.0;
+/** Exit plane of the two hollow rear nozzles. */
+const TA_NOZZLE_Z = 5.62;
 
 function buildTIEAdvanced(): Parts {
   const b = new PartBuilder();
@@ -1035,7 +1557,11 @@ function buildTIEAdvanced(): Parts {
     { z: 5.35, pts: oct(0.92, 0.4, -0.44, 0.2) },
   ]));
   b.add('hullDark', box(1.25, 0.66, 0.06), M(0, -0.02, 5.37));
-  for (const s of [-1, 1]) b.add('dark', cylZ(0.26, 0.26, 0.06, 18), M(s * 0.42, -0.02, 5.39));
+  for (const s of [-1, 1]) b.add('metal', nozzleShell(0.29, 0.28, 0.22, 0.28, 0.2), M(s * 0.42, -0.02, TA_NOZZLE_Z));
+  // rear hull: louvred cooling slats either side of the dorsal spine
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 7; i++) b.add('dark', box(0.32, 0.035, 0.09), M(s * 0.5, 0.645, 0.5 + i * 0.26));
+  }
   b.add('hullDark', box(0.5, 0.12, 4.0), M(0, 0.66, 1.4));
   b.add('hullDark', box(0.6, 0.1, 3.0), M(0, -0.66, 1.8));
   for (const s of [-1, 1]) {
@@ -1056,10 +1582,13 @@ function buildTIEAdvanced(): Parts {
   h.add('solar', slabYZ(center, 0.08), M(WX, 0, 0));
   for (let k = 0; k < center.length; k++) {
     const p = center[k], q = center[(k + 1) % center.length];
-    h.beam('hull', [WX, p[1], p[0]], [WX, q[1], q[0]], 0.2, 0.16, 0.08);
+    h.beam('hull', [WX, p[1], p[0]], [WX, q[1], q[0]], 0.32, 0.2, 0.1);
+    h.beam('hullDark', [WX, p[1] * 0.93, p[0] * 0.95], [WX, q[1] * 0.93, q[0] * 0.95], 0.18, 0.08, 0.03);
   }
-  h.beam('hull', [WX, 0, -2.6], [WX, 0, 2.9], 0.18, 0.14);
-  for (const z of [-1.0, 1.4]) h.beam('hullDark', [WX, -1.15, z], [WX, 1.15, z], 0.14, 0.08);
+  h.beam('hull', [WX, 0, -2.6], [WX, 0, 2.9], 0.26, 0.14);
+  h.beam('hullDark', [WX, 0, -2.4], [WX, 0, 2.7], 0.34, 0.06);
+  for (const z of [-1.0, 1.4]) h.beam('hullDark', [WX, -1.15, z], [WX, 1.15, z], 0.2, 0.08);
+  for (const z of [-2.0, -0.2, 0.6, 2.2]) h.beam('hullDark', [WX, -1.1, z], [WX, 1.1, z], 0.12, 0.04);
 
   const L = 2.2;
   const seg = new PartBuilder();
@@ -1067,9 +1596,10 @@ function buildTIEAdvanced(): Parts {
   seg.add('solar', slabYZ(segPoly, 0.08));
   for (let k = 0; k < segPoly.length; k++) {
     const p = segPoly[k], q = segPoly[(k + 1) % segPoly.length];
-    seg.beam('hull', [0, p[1], p[0]], [0, q[1], q[0]], 0.2, 0.16, 0.08);
+    seg.beam('hull', [0, p[1], p[0]], [0, q[1], q[0]], 0.32, 0.2, 0.1);
   }
-  seg.beam('hullDark', [0, 0, 0.4], [0, L, 0.8], 0.14, 0.08);
+  seg.beam('hullDark', [0, 0, 0.4], [0, L, 0.8], 0.22, 0.08);
+  for (const z of [-1.2, 1.9]) seg.beam('hullDark', [0, 0, z], [0, L * 0.95, z * 0.6 + 0.3], 0.12, 0.04);
   h.addBuilder(seg, new THREE.Matrix4().makeTranslation(WX, 1.15, 0).multiply(new THREE.Matrix4().makeRotationZ(30 * DEG)));
   h.addBuilder(seg, new THREE.Matrix4().makeTranslation(WX, -1.15, 0).multiply(new THREE.Matrix4().makeRotationZ(-30 * DEG)).multiply(MY));
   b.addBuilder(h, IDENT);
@@ -1077,15 +1607,15 @@ function buildTIEAdvanced(): Parts {
   return b.finish(3, imperialPalette(0x7d838a));
 }
 
-let taParts: Parts | null = null;
+let taParts: LodParts | null = null;
 
 export function createTIEAdvanced(): GunShipModel {
-  const parts = (taParts ??= buildTIEAdvanced());
+  const parts = (taParts ??= [buildTIEAdvanced(), buildLow(buildTIEAdvanced)]);
   const root = new THREE.Group();
   root.name = 'TIEAdvanced';
-  addParts(root, parts, imperialMats());
+  addLodParts(root, parts, imperialMats());
   const glow = new EngineGlow(0x7dff9a, 0.8, 0.3);
-  for (const s of [-1, 1]) glow.addNozzle(root, s * 0.42, -0.02, 5.425, 0.22, 0.9);
+  for (const s of [-1, 1]) glow.addNozzle(root, s * 0.42, -0.02, TA_NOZZLE_Z, 0.21, 0.9, 0.9);
   const cannonMuzzles = [-1, 1].map((s) => empty(root, 'muzzle', s * 0.36, -0.66, TA_CZ - 1.47));
   return {
     root,
@@ -1107,7 +1637,7 @@ const FAL_TOP: number[][] = [[0, 2.3], [3.0, 2.25], [3.4, 1.95], [11.0, 1.0], [1
 const falTopY = (r: number): number => interpKeys(FAL_TOP, r)[0];
 
 let _falStrip: THREE.BufferGeometry | null = null;
-const falStripGeo = (): THREE.BufferGeometry => (_falStrip ??= new THREE.CylinderGeometry(12.95, 12.95, 0.5, 64, 1, true, -1.05, 2.1));
+const falStripGeo = (): THREE.BufferGeometry => (_falStrip ??= withStripGlow(new THREE.CylinderGeometry(12.95, 12.95, 0.5, 64, 2, true, -1.05, 2.1), 0.25));
 
 function buildFalcon(): Parts {
   const b = new PartBuilder();
@@ -1182,25 +1712,39 @@ function buildFalcon(): Parts {
   b.addBuilder(t, IDENT);
   b.addBuilder(t, MY);
 
-  // surface greebles (top + bottom)
+  // surface greebles (top + bottom): big plates/boxes plus clusters of small machinery
   const greebles = (count: number): PartBuilder => {
     const g = new PartBuilder();
+    const onDeck = (r: number, th: number, lift: number): THREE.Matrix4 => {
+      const slope = (falTopY(r + 0.1) - falTopY(r - 0.1)) / 0.2;
+      return new THREE.Matrix4().makeRotationY(th).multiply(new THREE.Matrix4().makeRotationX(Math.atan(-slope)))
+        .setPosition(r * Math.sin(th), falTopY(r) + lift, FAL_CZ + r * Math.cos(th));
+    };
     for (let i = 0; i < count; i++) {
       const r = 3.8 + rng() * 8.0;
       const th = rng() * Math.PI * 2;
       const x = r * Math.sin(th), z = FAL_CZ + r * Math.cos(th);
       if (Math.hypot(x - dx, z - dz) < 2.6) continue;
-      const w = 0.25 + rng() * 0.8, l = 0.3 + rng() * 1.3, hh = 0.08 + rng() * 0.25;
-      const y = falTopY(r);
-      const slope = (falTopY(r + 0.1) - falTopY(r - 0.1)) / 0.2;
-      const m = new THREE.Matrix4().makeRotationY(th).multiply(new THREE.Matrix4().makeRotationX(Math.atan(-slope)));
-      m.setPosition(x, y + hh / 2 - 0.08, z);
-      g.add(rng() < 0.6 ? 'hullDark' : 'hull', box(w, hh, l), m);
+      const small = rng() < 0.6;
+      const w = small ? 0.12 + rng() * 0.35 : 0.25 + rng() * 0.8;
+      const l = small ? 0.15 + rng() * 0.5 : 0.3 + rng() * 1.3;
+      const hh = small ? 0.06 + rng() * 0.18 : 0.08 + rng() * 0.25;
+      const roll = rng();
+      g.add(roll < 0.45 ? 'hullDark' : roll < 0.6 ? 'metal' : 'hull', box(w, hh, l), onDeck(r, th, hh / 2 - 0.08));
+    }
+    // conduits running radially across the deck
+    for (let i = 0; i < count / 8; i++) {
+      const th = rng() * Math.PI * 2;
+      const r0 = 3.6 + rng() * 3, r1 = Math.min(10.8, r0 + 1.5 + rng() * 4);
+      const p = (r: number): V3 => [r * Math.sin(th), falTopY(r) + 0.07, FAL_CZ + r * Math.cos(th)];
+      if (Math.hypot(p(r0)[0] - dx, p(r0)[2] - dz) < 3 || Math.hypot(p(r1)[0] - dx, p(r1)[2] - dz) < 3) continue;
+      g.rod('metal', p(r0), p(r1), 0.06, 0.06, 6);
+      for (let r = r0 + 0.3; r < r1; r += 1.1) g.add('hullDark', box(0.2, 0.1, 0.12), onDeck(r, th, 0.05));
     }
     return g;
   };
-  b.addBuilder(greebles(90), IDENT);
-  b.addBuilder(greebles(45), MY);
+  b.addBuilder(greebles(240), IDENT);
+  b.addBuilder(greebles(120), MY);
   // rear engine deck ribs
   for (let k = 0; k < 15; k++) {
     const th = -0.9 + (k * 1.8) / 14;
@@ -1216,8 +1760,8 @@ let falParts: Parts | null = null;
 export function createFalcon(): GunShipModel {
   const parts = (falParts ??= buildFalcon());
   const mats: Record<string, THREE.Material> = {
-    paint: paintMat('freighter', 0.7, 0.18, 1),
-    hullDS: panelMat('fal_hull_ds', 0xb5b1a7, 'freighter', 0.7, 0.15, 1, THREE.DoubleSide),
+    paint: paintMat('freighter', 1.1),
+    hullDS: panelMat('fal_hull_ds', 0xb5b1a7, 'freighter', THREE.DoubleSide),
     glass: glassMat(),
   };
   const root = new THREE.Group();
@@ -1244,7 +1788,7 @@ const DS_PALETTE: Record<string, number> = { ds: 0x8e9195, dsDark: 0x595c60, met
 
 function deathStarMats(): Record<string, THREE.Material> {
   return {
-    paint: paintMat('deathstar', 0.78, 0.22, 1),
+    paint: paintMat('deathstar'),
     light: glowMat('ds_window', 0xffd9a0, 1.4),
   };
 }
@@ -1468,8 +2012,8 @@ function buildExhaustPort(): Parts {
 export function createExhaustPort(): THREE.Group {
   const parts = (exhaustParts ??= buildExhaustPort());
   const mats: Record<string, THREE.Material> = {
-    paint: paintMat('deathstar', 0.78, 0.22, 1),
-    dsDS: panelMat('ds_ds', 0x8e9195, 'deathstar', 0.78, 0.2, 1, THREE.DoubleSide),
+    paint: paintMat('deathstar'),
+    dsDS: panelMat('ds_ds', 0x8e9195, 'deathstar', THREE.DoubleSide),
     darkDS: plainMat('dark_ds', 0x0b0b0d, 0.9, 0.2, THREE.DoubleSide),
     glow: glowMat('exhaust_core', 0xff6a30, 0.9),
   };
@@ -1513,7 +2057,7 @@ const SD_HANGAR_Z = 240;
 const SD_DOME_Y = 298;
 const SD_DOME_X = 100;
 const SD_BRIDGE_Z = 626;
-const SD_PALETTE: Record<string, number> = { hull: 0xb4b8bd, hullDark: 0x7c8187, dark: C_DARK, metal: C_METAL };
+const SD_PALETTE: Record<string, number> = { hull: 0xb4b8bd, hullAlt: 0xa3a8ae, hullDark: 0x8a8f95, dark: C_DARK, metal: C_METAL };
 
 /**
  * Wedge dimensions at z. Every dimension is linear in s (0 at the nose tip, 1 at the stern), so the
@@ -1585,24 +2129,48 @@ function buildStarDestroyer(variant: number): SDParts {
     const p = (z: number): V3 => [f * sdDims(z).w, sdTopY(f * sdDims(z).w, z) + 0.3, z];
     h.beam('hullDark', p(-640), p(790), 2.5, 0.9);
   }
+  const topSlope = Math.atan(81 / 427.5);
+  // dorsal armour plating: a staggered grid of thin plates in two tones (reads at any range)
+  for (let z = -700; z < 780; z += 26) {
+    const { w } = sdDims(z + 13);
+    const cover = sdCoverHW(z + 30) + 6;
+    const k = 0.4 + 0.6 * (w / 450);
+    const step = 28 * k;
+    for (let ax = Math.max(0.07 * w, cover) + step * 0.5 * rng(); ax < 0.93 * w - step * 0.5; ax += step) {
+      if (rng() < 0.42) continue;
+      const pw = step * (0.7 + rng() * 0.28), pl = 26 * (0.6 + rng() * 0.38);
+      h.add(rng() < 0.5 ? 'hullAlt' : 'hull', box(pw, 1.2, pl, 0.5), M(ax, sdTopY(ax, z + 13) + 0.1, z + 13, 0, 0, -topSlope));
+    }
+  }
 
   // --- stepped superstructure ---------------------------------------------------------
   for (const [z0, hw, top] of SD_TIERS) {
-    b.add('hull', box(hw * 2, top, 790 - z0), M(0, top / 2, (z0 + 790) / 2));
+    b.add('hull', box(hw * 2, top, 790 - z0, 2.5), M(0, top / 2, (z0 + 790) / 2));
     b.add('hullDark', box(hw * 2 + 4, 3, 6), M(0, top - 1, z0 + 3));
-    for (let x = 4; x < hw - 4; x += 7) {
-      for (const y of [top - 4.5, top - 9]) if (rng() < 0.55) h.add('light', flatPlane(3.5, 1.4), M(x, y, z0 - 0.4, 0, Math.PI, 0));
+    // front-face window rows (dense near the top deck, thinning out lower down)
+    for (let y = top - 4.5, row = 0; y > 8; y -= 4.5, row++) {
+      const p = 0.7 - row * 0.06;
+      for (let x = 3; x < hw - 4; x += 4.2) if (rng() < p) h.add('light', flatPlane(2.6, 1.1), M(x, y, z0 - 0.4, 0, Math.PI, 0));
     }
-    for (let z = z0 + 6; z < 785; z += 9) if (rng() < 0.5) h.add('light', flatPlane(3.5, 1.4), M(hw + 0.4, top - 5, z, 0, Math.PI / 2, 0));
-    for (let i = 0; i < 6; i++) {
-      const gw = 6 + rng() * 22, gl = 8 + rng() * 40, gh = 2 + rng() * 7;
-      h.add(rng() < 0.5 ? 'hullDark' : 'metal', box(gw, gh, gl), M(gw / 2 + rng() * (hw - gw), top + gh / 2 - 1, z0 + 20 + rng() * (760 - z0)));
+    // side walls: window rows + structural buttresses
+    for (let y = top - 5, row = 0; y > 6; y -= 5, row++) {
+      for (let z = z0 + 5; z < 785; z += 4.8) if (rng() < 0.55 - row * 0.05) h.add('light', flatPlane(2.6, 1.1), M(hw + 0.4, y, z, 0, Math.PI / 2, 0));
+    }
+    for (let z = z0 + 30; z < 770; z += 38 + rng() * 20) h.add('hullDark', box(4, top * 0.85, 5), M(hw + 1.6, top * 0.45, z));
+    for (let i = 0; i < 18; i++) {
+      const gw = 4 + rng() * 22, gl = 6 + rng() * 40, gh = 1.5 + rng() * 7;
+      const roll = rng();
+      h.add(roll < 0.45 ? 'hullDark' : roll < 0.75 ? 'metal' : 'hullAlt', box(gw, gh, gl), M(gw / 2 + rng() * (hw - gw), top + gh / 2 - 1, z0 + 20 + rng() * (760 - z0)));
     }
   }
   // bridge tower neck
   b.add('hull', box(84, 100, 100), M(0, 200, 635));
   b.add('hullDark', box(60, 60, 104), M(0, 210, 635));
-  for (let y = 165; y < 245; y += 7) for (let x = -36; x <= 36; x += 6) if (rng() < 0.4) b.add('light', flatPlane(3, 1.2), M(x, y, 584.6, 0, Math.PI, 0));
+  for (let y = 158; y < 248; y += 4.5) for (let x = -38; x <= 38; x += 4.2) if (rng() < 0.45) b.add('light', flatPlane(2.6, 1.1), M(x, y, 584.6, 0, Math.PI, 0));
+  for (const sx of [-1, 1]) {
+    for (let z = 592; z < 680; z += 12) b.add('hullDark', box(3, 92, 4), M(sx * 43.5, 200, z));
+    for (let y = 160; y < 246; y += 6) for (let z = 590; z < 682; z += 4.6) if (rng() < 0.3) b.add('light', flatPlane(2.6, 1.1), M(sx * 42.4, y, z, 0, sx * Math.PI / 2, 0));
+  }
   // dome pylons + masts
   for (const sx of [-1, 1]) b.add('metal', cylY(6, 7, 14, 12), M(sx * SD_DOME_X, 273, SD_BRIDGE_Z + 2));
   b.rod('metal', [0, 280, 632], [0, 312, 632], 1.6, 0.8, 6);
@@ -1622,24 +2190,25 @@ function buildStarDestroyer(variant: number): SDParts {
 
   // --- trench windows + dorsal/ventral greebles (starboard, mirrored) ------------------
   const trenchYaw = Math.atan2(1, -(434 / 1600));
-  for (let z = -700; z < 795; z += 6) {
+  for (let z = -720; z < 795; z += 3.6) {
     const { w, d, t } = sdDims(z);
-    for (const row of t > 6 ? [-0.45, 0, 0.45] : [0]) {
-      if (rng() < 0.5) h.add('light', flatPlane(3, 1.2), M(w - d + 0.4, row * t, z, 0, trenchYaw, 0));
+    for (const row of t > 6 ? [-0.62, -0.31, 0, 0.31, 0.62] : t > 3 ? [-0.4, 0.4] : [0]) {
+      if (rng() < 0.42) h.add('light', flatPlane(2.4, 1.0), M(w - d + 0.4, row * t, z, 0, trenchYaw, 0));
     }
   }
-  const topSlope = Math.atan(81 / 427.5);
-  for (let i = 0; i < 170; i++) {
+  for (let i = 0; i < 460; i++) {
     const z = -720 + rng() * 1500;
     const { w } = sdDims(z);
     const ax = w * (0.1 + rng() * 0.82);
     if (ax < sdCoverHW(z) + 4) continue;
     const k = 0.35 + 0.65 * (w / 450);
-    const gw = (3 + rng() * 16) * k, gl = (4 + rng() * 30) * k, gh = (1.5 + rng() * 7) * k;
-    h.add(rng() < 0.55 ? 'hullDark' : 'hull', box(gw, gh + 3, gl), M(ax, sdTopY(ax, z) + (gh - 3) / 2, z, 0, 0, -topSlope));
+    const small = rng() < 0.55;
+    const gw = (small ? 2 + rng() * 6 : 3 + rng() * 16) * k, gl = (small ? 3 + rng() * 8 : 4 + rng() * 30) * k, gh = (1.5 + rng() * 7) * k;
+    const roll = rng();
+    h.add(roll < 0.32 ? 'hullDark' : roll < 0.42 ? 'metal' : roll < 0.7 ? 'hullAlt' : 'hull', box(gw, gh + 3, gl), M(ax, sdTopY(ax, z) + (gh - 3) / 2, z, 0, 0, -topSlope));
   }
   const keelSlope = Math.atan(0.05);
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 180; i++) {
     const z = -600 + rng() * 1380;
     const { w, hB } = sdDims(z);
     const ax = rng() * w * 0.32;
@@ -1670,12 +2239,17 @@ function buildStarDestroyer(variant: number): SDParts {
   const cores: THREE.BufferGeometry[] = [];
   const plumes: THREE.BufferGeometry[] = [];
   for (const [x, y, r, len] of nozzles) {
-    const hl0 = SD_NOZZLE_Z - 845;
-    b.add('hull', cylZ(r + 4, r, hl0, 32), M(x, y, 845 + hl0 / 2));
-    b.add('metal', cylZ(r + 5, r + 5, 4, 32), M(x, y, 860));
-    b.add('dark', new THREE.TorusGeometry(r * 0.92, r * 0.07, 6, 32), M(x, y, SD_NOZZLE_Z + 0.4));
-    cores.push(new THREE.CircleGeometry(r * 0.86, 32).translate(x, y, SD_NOZZLE_Z + 0.7));
-    plumes.push(new THREE.ConeGeometry(r * 0.8, len, 24, 1, true).translate(0, len / 2, 0).rotateX(Math.PI / 2).translate(x, y, 0));
+    const depth = SD_NOZZLE_Z - 851;
+    b.add('hull', nozzleShell(r + 6, r + 3, r, SD_NOZZLE_Z - 845, depth, 40), M(x, y, SD_NOZZLE_Z));
+    b.add('metal', cylZ(r + 6.6, r + 6.6, 4, 40), M(x, y, 858));
+    b.add('hullDark', cylZ(r + 5.2, r + 5.2, 2, 40), M(x, y, 870));
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      b.add('hullDark', box(4, 3, 18), M(x + (r + 5.5) * Math.cos(a), y + (r + 5.5) * Math.sin(a), 852, 0, 0, a));
+    }
+    const rr = r * 0.98;
+    cores.push(coreGeometry(depth / rr, 40).scale(rr, rr, rr).translate(x, y, SD_NOZZLE_Z));
+    plumes.push(plumeGeometry(r * 0.85, len, 28).translate(x, y, 0));
   }
 
   // --- turbolaser batteries --------------------------------------------------------------
@@ -1740,10 +2314,10 @@ export function createStarDestroyer(seed: number): StarDestroyerModel {
     parts = buildStarDestroyer(v);
     sdCache.set(v, parts);
   }
-  const paint = paintMat('imperial', 0.55, 0.3, 1);
+  const paint = paintMat('imperial', 1.1);
   const scorch = cachedMat('sd_scorch', () => {
     const t = getPanelTextures('imperial');
-    return new THREE.MeshStandardMaterial({ vertexColors: true, color: 0x2b2522, map: t.map, bumpMap: t.bumpMap, roughness: 1, metalness: 0.1 });
+    return new THREE.MeshStandardMaterial({ vertexColors: true, color: 0x2b2522, map: t.map, normalMap: t.normalMap, roughness: 1, metalness: 0.1 });
   });
   const windowMat = glowMat('sd_window', 0xdfeaff, 1.4);
   const root = new THREE.Group();

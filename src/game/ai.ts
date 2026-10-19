@@ -123,8 +123,11 @@ export class DogfightBrain {
       const dist = t.pos.distanceTo(ship.pos);
       const lead = dist / ship.spec.boltSpeed;
       _aim.copy(t.pos).addScaledVector(t.vel, lead * clamp(this.opts.skill * 1.2, 0, 1));
-      // Imperfect gunnery: a slowly wandering aim error that shrinks with skill.
-      const err = dist * 0.035 * clamp(1.25 - this.opts.skill, 0.15, 1.2);
+      // Imperfect gunnery: a slowly wandering aim error that shrinks with skill. Chasing the player from
+      // directly behind is the deadliest geometry, so tail shots get extra error (the player must get time to break).
+      const tp = t as Ship; // isPlayer is only set on ships; other Targetables read undefined
+      const onTail = tp.isPlayer === true && tp.forward(_l).dot(_r.copy(t.pos).sub(ship.pos).normalize()) > 0.7;
+      const err = dist * 0.035 * clamp(1.25 - this.opts.skill, 0.15, 1.2) * (onTail ? 1.8 : 1);
       const ph = ship.id * 1.7 + world.time * 0.9;
       _aim.x += Math.sin(ph) * err;
       _aim.y += Math.cos(ph * 1.3) * err;
@@ -135,7 +138,9 @@ export class DogfightBrain {
       ship.throttle = dist < 260 && cos > 0.5 ? clamp(t.vel.length() / ship.spec.maxSpeed, 0.4, 1) : 1;
       const cone = 0.995 - (1 - this.opts.skill) * 0.012;
       const fireScale = this.opts.fireScale ?? 1;
-      if (cos > cone && dist < 850 && Math.random() < 0.75 * fireScale) ship.ctrl.fire = true;
+      // Fire in bursts (about 40 % duty cycle), never a continuous stream.
+      const burst = (world.time * 0.4 + ship.id * 0.37) % 1 < 0.3 + 0.15 * this.opts.skill;
+      if (burst && cos > cone && dist < 850 && Math.random() < 0.75 * fireScale) ship.ctrl.fire = true;
       if (dist < 70 + ship.radius * 4 && cos > 0) {
         this.mode = 'extend';
         this.modeT = 2 + Math.random() * 1.5;

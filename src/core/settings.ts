@@ -26,13 +26,14 @@ export const DIFFICULTY_SCALE: Record<Difficulty, number> = { cadet: 0.65, pilot
 /**
  * Aim assist per difficulty. Only engages when the reticle is already near a target's lead point:
  * `coneDeg` is the base capture cone (plus the target's angular size, shrinking past ~800 m),
- * `friction` slows the stick while on target, `lockTime` is the proton torpedo lock time.
+ * `friction` slows the stick while on target, `lockTime` is the proton torpedo lock time,
+ * `lockSteer`: a completed lock also directs the laser cannons onto the target (Cadet only).
  */
-export const AIM_ASSIST: Record<Difficulty, { coneDeg: number; range: number; friction: number; lockTime: number }> = {
-  cadet: { coneDeg: 4.5, range: 1500, friction: 0.45, lockTime: 0.7 },
-  pilot: { coneDeg: 2.8, range: 1250, friction: 0.3, lockTime: 1.0 },
-  ace: { coneDeg: 1.6, range: 1000, friction: 0.15, lockTime: 1.3 },
-  jedi: { coneDeg: 0.7, range: 800, friction: 0, lockTime: 1.6 },
+export const AIM_ASSIST: Record<Difficulty, { coneDeg: number; range: number; friction: number; lockTime: number; lockSteer: boolean }> = {
+  cadet: { coneDeg: 4.5, range: 1500, friction: 0.45, lockTime: 0.7, lockSteer: true },
+  pilot: { coneDeg: 2.8, range: 1250, friction: 0.3, lockTime: 1.0, lockSteer: false },
+  ace: { coneDeg: 1.6, range: 1000, friction: 0.15, lockTime: 1.3, lockSteer: false },
+  jedi: { coneDeg: 0.7, range: 800, friction: 0, lockTime: 1.6, lockSteer: false },
 };
 
 const KEY = 'yavin.settings.v1';

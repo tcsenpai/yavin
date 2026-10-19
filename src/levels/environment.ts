@@ -10,6 +10,7 @@ import {
   updateCelestial,
   type DeathStarSphere,
 } from '../world/celestial';
+import { createSpaceEnvMap } from '../render/spaceEnvMap';
 
 export const DEATH_STAR_RADIUS = 80000; // DS-I ≈ 160 km diameter
 
@@ -43,10 +44,12 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
   const sun = createSun();
   scene.add(stars, sun);
 
-  const yavin = createGasGiantYavin(7e7);
+  const yavinRadius = 7e7;
+  const yavin4Radius = 5e6;
+  const yavin = createGasGiantYavin(yavinRadius);
   yavin.position.copy(opts.yavinPos ?? new THREE.Vector3(-1.6e8, -0.3e8, 2.4e8));
   scene.add(yavin);
-  const yavin4 = createMoonYavin4(5e6);
+  const yavin4 = createMoonYavin4(yavin4Radius);
   yavin4.position.copy(opts.yavin4Pos ?? new THREE.Vector3(1.2e7, -0.4e7, 3.2e7));
   scene.add(yavin4);
 
@@ -60,6 +63,22 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
     }
     scene.add(deathStar.mesh);
   }
+
+  // Image-based lighting: a procedural radiance map of this level's sky (bodies placed where they
+  // really are), generated once and PMREM-filtered by three on first use.
+  const bodies = [
+    { center: yavin.position, radius: yavinRadius, albedoA: new THREE.Color(0.62, 0.3, 0.1), albedoB: new THREE.Color(0.36, 0.13, 0.04), bands: 9 },
+    { center: yavin4.position, radius: yavin4Radius, albedoA: new THREE.Color(0.12, 0.2, 0.1), albedoB: new THREE.Color(0.22, 0.26, 0.3), bands: 2 },
+  ];
+  // Shadowed levels fly over the station: the trench passes no sphere, but sits on the plane y = 0.
+  const dsCenter = opts.deathStarCenter ?? (opts.shadows ? new THREE.Vector3(0, -DEATH_STAR_RADIUS, 0) : null);
+  if (dsCenter) {
+    // Effective albedo, darker than the plating itself: the city of greebles shadows most of it.
+    const grey = new THREE.Color(0.15, 0.155, 0.165);
+    bodies.push({ center: dsCenter, radius: DEATH_STAR_RADIUS, albedoA: grey, albedoB: grey, bands: 0 });
+  }
+  scene.environment = createSpaceEnvMap({ sunDirection: SUN_DIRECTION, bodies });
+  scene.environmentIntensity = 2.0;
 
   const sunLight = new THREE.DirectionalLight(0xfff1dc, 3.2);
   sunLight.position.copy(SUN_DIRECTION).multiplyScalar(1000);
@@ -77,9 +96,12 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
     sc.far = 3000;
     sunLight.shadow.bias = -0.0004;
     sunLight.shadow.normalBias = 0.6;
+    // PCF in three r18x uses a Vogel-disk kernel: the radius widens the penumbra at no extra cost.
+    sunLight.shadow.radius = 2.5;
   }
-  // Fill: cool bounce from space + warm reflected Yavin light from below.
-  scene.add(new THREE.HemisphereLight(0x5a6c8a, 0x3a2a1c, opts.ambient ?? 0.55));
+  // Fill: cool bounce from space + warm reflected Yavin light from below. Kept low: the IBL above
+  // now supplies directional ambient (Death Star / Yavin bounce) instead of a flat wash.
+  scene.add(new THREE.HemisphereLight(0x5a6c8a, 0x3a2a1c, (opts.ambient ?? 0.55) * 0.6));
   // Viewer fill ("key light from the camera"): keeps black TIE panels and shadowed hulls readable
   // against black space — the same trick space-combat games use for silhouette legibility.
   const viewFill = new THREE.DirectionalLight(0xbfd2ff, opts.viewFill ?? 0.35);
