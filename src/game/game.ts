@@ -92,6 +92,7 @@ class Ctx implements LevelContext {
     readonly difficulty: number,
     readonly checkpoint: number,
     private toast: (text: string, color: string) => void,
+    private onCheckpoint: (value: number) => void,
   ) {}
 
   run(script: Script): void {
@@ -122,6 +123,9 @@ class Ctx implements LevelContext {
   award(points: number, label: StringKey, params?: Record<string, string | number>): void {
     this.stats.score += points;
     this.toast(`+${points}  ${t(label, params)}`, '#ffd27a');
+  }
+  reachCheckpoint(value: number): void {
+    this.onCheckpoint(value);
   }
   waitAction(action: 'confirm' | 'sfoils' | 'deflectors' | 'targetComputer', hint: StringKey, timeout = 15): () => boolean {
     this.hint = hint;
@@ -205,6 +209,20 @@ export class Game {
           this.inCampaign = false;
           this.openLevel(id, cp ?? 0);
         }),
+      continueCampaign: () =>
+        this.unlockAudio(() => {
+          const r = this.resumePoint();
+          this.inCampaign = true;
+          this.campaignStats = newStats();
+          this.openLevel(r?.id ?? campaign[0], r?.checkpoint ?? 0);
+        }),
+      resumeInfo: () => {
+        const r = this.resumePoint();
+        const lv = r && this.levels.find((l) => l.id === r.id);
+        if (!r || !lv) return null;
+        const cp = lv.checkpoints?.find((c) => c.value === r.checkpoint);
+        return `${t(lv.titleKey)}${cp && r.checkpoint > 0 ? ` · ${t(cp.key)}` : ''}`;
+      },
       setDifficulty: (d) => {
         this.settings.difficulty = d;
         this.applySettings(this.settings);
@@ -297,6 +315,33 @@ export class Game {
     this.target = null;
   }
 
+  /** Called by levels as the player passes a checkpoint: retries resume from here, and it unlocks in the menu. */
+  private saveCheckpoint(level: LevelDef, value: number): void {
+    if (value <= this.checkpoint) return;
+    this.checkpoint = value;
+    const prev = this.settings.checkpoints[level.id] ?? 0;
+    if (value > prev) {
+      this.settings.checkpoints[level.id] = value;
+      saveSettings(this.settings);
+    }
+    this.feedback.toasts.push({ text: t('toast.checkpoint'), color: '#8fd3ff', life: 3.5 });
+    this.audio.ui('objective');
+  }
+
+  /** Furthest point reached in the campaign: the next mission after the last completed one, or a saved checkpoint. */
+  private resumePoint(): { id: string; checkpoint: number } | null {
+    let best: { id: string; checkpoint: number } | null = null;
+    const missions = this.campaign.filter((id) => this.levels.find((l) => l.id === id)?.kind === 'mission');
+    for (const [i, id] of missions.entries()) {
+      const cp = this.settings.checkpoints[id] ?? 0;
+      if (this.settings.completed.includes(id)) {
+        const next = missions[i + 1];
+        best = next ? { id: next, checkpoint: this.settings.checkpoints[next] ?? 0 } : { id, checkpoint: 0 };
+      } else if (cp > 0) best = { id, checkpoint: cp };
+    }
+    return best;
+  }
+
   private openNext(): void {
     const i = this.campaign.indexOf(this.level.id);
     if (i < 0 || i + 1 >= this.campaign.length) {
@@ -329,8 +374,17 @@ export class Game {
       const diff = DIFFICULTY_SCALE[this.settings.difficulty];
       world.difficulty = diff;
       this.feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
-      const ctx = new Ctx(scene, world, this.audio, this.comms, this.input, this.engine.camera, diff, checkpoint, (text, color) =>
-        this.feedback.toasts.push({ text, color, life: 3.2 }),
+      const ctx = new Ctx(
+        scene,
+        world,
+        this.audio,
+        this.comms,
+        this.input,
+        this.engine.camera,
+        diff,
+        checkpoint,
+        (text, color) => this.feedback.toasts.push({ text, color, life: 3.2 }),
+        (value) => this.saveCheckpoint(level, value),
       );
       this.ctx = ctx;
       this.wireWorldEvents(ctx);
@@ -405,7 +459,12 @@ export class Game {
     this.state = 'paused';
     this.input.releaseLock();
     this.audio.suspend();
-    this.menus.showPause(this.level.checkpoints, this.checkpoint);
+    this.menus.showPause(this.unlockedCheckpoints(this.level), this.checkpoint);
+  }
+
+  private unlockedCheckpoints(level: LevelDef): { key: StringKey; value: number }[] | undefined {
+    const reached = Math.max(this.settings.checkpoints[level.id] ?? 0, this.checkpoint);
+    return level.checkpoints?.filter((c) => c.value <= reached);
   }
 
   private resume(): void {
@@ -433,7 +492,7 @@ export class Game {
     if (o.kind === 'fail') {
       this.audio.ui('fail');
       this.audio.setMusic('defeat');
-      this.menus.showFail(o.reason, level.checkpoints, this.checkpoint);
+      this.menus.showFail(o.reason, this.unlockedCheckpoints(level), this.checkpoint);
       return;
     }
     if (level.kind === 'cinematic') {

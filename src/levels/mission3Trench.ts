@@ -27,6 +27,7 @@ export const mission3: LevelDef = {
   checkpoints: [
     { key: 'l4.cp.start', value: 0 },
     { key: 'l4.cp.vader', value: 0.5 },
+    { key: 'l4.cp.final', value: 0.85 },
   ],
   setup(ctx: LevelContext) {
     const env = buildEnvironment(ctx.scene, {
@@ -128,7 +129,9 @@ export const mission3: LevelDef = {
     let finished = false;
     let outOfTrench = 0;
     let vaderFire = 0;
-    let vaderAimAtPlayer = false;
+    // Resuming at the final approach: R2 is already lost and Vader already has a bead on you.
+    let vaderAimAtPlayer = p0 >= 0.82;
+    if (p0 >= 0.6) ctx.r2Alive = false;
     let tcScroll = 0;
 
     const fireVader = (target: THREE.Vector3, miss: number) => {
@@ -151,6 +154,7 @@ export const mission3: LevelDef = {
       surface.update(ctx.camera.position, 2);
       trench.update(ctx.camera.position);
       manageTurrets();
+      for (const cp of [0.5, 0.85]) if (progress() > cp) ctx.reachCheckpoint(cp);
       if (!finished && ctx.timer) {
         ctx.timer.seconds -= dt;
         if (ctx.timer.seconds <= 0) {

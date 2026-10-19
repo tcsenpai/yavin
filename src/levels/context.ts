@@ -67,6 +67,8 @@ export interface LevelContext {
   banner(title: StringKey, sub?: StringKey, seconds?: number): void;
   /** Score + floating notification (kill feed / objective bonus). */
   award(points: number, label: StringKey, params?: Record<string, string | number>): void;
+  /** The player has passed checkpoint `value` (one of LevelDef.checkpoints): saved and used for retries. */
+  reachCheckpoint(value: number): void;
   /** Prompt the player for an action key press; resolves when pressed (or after timeout). */
   waitAction(action: 'confirm' | 'sfoils' | 'deflectors' | 'targetComputer', hint: StringKey, timeout?: number): () => boolean;
 }
@@ -82,6 +84,7 @@ export interface LevelDef {
   /** Text card shown before the level. */
   introKey: StringKey;
   controlsKey?: StringKey;
+  /** Ordered resumable scenes; the first must have value 0 (mission start). Unlocked as the player reaches them. */
   checkpoints?: { key: StringKey; value: number }[];
   setup(ctx: LevelContext): void;
 }

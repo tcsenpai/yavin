@@ -15,6 +15,8 @@ export interface Settings {
   best: Record<string, { score: number; rank: string; difficulty: Difficulty }>;
   /** Difficulty-scaled aim assist (bolt magnetism + reticle friction). */
   aimAssist: boolean;
+  /** Furthest checkpoint value reached per mission id (unlocks resuming from it). */
+  checkpoints: Record<string, number>;
 }
 
 export const DIFFICULTIES = ['cadet', 'pilot', 'ace', 'jedi'] as const;
@@ -60,6 +62,7 @@ const DEFAULTS: Settings = {
   completed: [],
   best: {},
   aimAssist: true,
+  checkpoints: {},
 };
 
 export function loadSettings(): Settings {

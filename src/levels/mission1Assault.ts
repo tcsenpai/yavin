@@ -65,6 +65,10 @@ export const mission1: LevelDef = {
   subKey: 'm1.sub',
   introKey: 'm1.intro',
   controlsKey: 'm1.controls',
+  checkpoints: [
+    { key: 'm1.cp.start', value: 0 },
+    { key: 'm1.cp.battle', value: 1 },
+  ],
   setup(ctx: LevelContext) {
     // The station sits ahead and slightly below; its apparent distance is scripted (time-compressed approach).
     const dsDir = new THREE.Vector3(0.08, -0.2, -1).normalize();
@@ -222,6 +226,7 @@ export const mission1: LevelDef = {
     };
 
     function startBattle(): void {
+      ctx.reachCheckpoint(1);
       battle = true;
       closing = 60;
       ctx.music('combat');
@@ -283,9 +288,15 @@ export const mission1: LevelDef = {
       ctx.setObjective(2, { done: true });
       yield c.say('wedge', 'l1.wedge.size');
       c.say('redLeader', 'l1.rl.chatter');
+      yield* battleIntro();
+    }
+    /** `resumed`: when starting from the checkpoint the fight is already on as the radio call comes in. */
+    function* battleIntro(resumed = false): Script {
+      const c = ctx.comms;
+      if (resumed) startBattle();
       // The Imperial screen: two destroyers come around the station.
       yield c.say('redLeader', 'ls.rl.destroyers');
-      startBattle();
+      if (!resumed) startBattle();
       c.say('base', 'ls.base.orders');
       c.say('goldLeader', 'ls.gold.cover');
       yield 6;
@@ -293,6 +304,19 @@ export const mission1: LevelDef = {
       yield 30;
       c.say('porkins', 'ls.porkins.flak');
     }
-    ctx.run(script());
+
+    if (ctx.checkpoint >= 1) {
+      // Checkpoint "Star Destroyers": skip the approach — formation already in attack trim, destroyers on station.
+      for (const i of [0, 1, 2]) ctx.objectives[i].done = true;
+      for (const s of [player, lead, ...wing, ...golds]) {
+        s.sfoils = s.sfoilTarget = 1;
+        s.pos.z -= 3500;
+      }
+      player.setDeflectors('front');
+      player.throttle = 0.8;
+      caps.forEach((c) => c.root.position.add(new THREE.Vector3(0, 0, 2500)));
+      dist = 55000;
+      ctx.run(battleIntro(true));
+    } else ctx.run(script());
   },
 };

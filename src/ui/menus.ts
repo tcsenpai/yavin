@@ -9,6 +9,10 @@ export type Rank = 'S' | 'A' | 'B' | 'C';
 export interface MenuHandlers {
   startCampaign(): void;
   startLevel(id: string, checkpoint?: number): void;
+  /** Resume the campaign from the furthest point reached. */
+  continueCampaign(): void;
+  /** Label of the resume point, or null when there's nothing to continue. */
+  resumeInfo(): string | null;
   /** Change difficulty from a mission card (rebuilds the level behind it). */
   setDifficulty(d: Difficulty): void;
   settingsChanged(s: Settings): void;
@@ -114,8 +118,14 @@ export class Menus {
       const panel = el('div', 'title-screen');
       panel.append(el('div', 'pre', t('menu.pre')), el('h1', 'logo', t('menu.title')), el('div', 'subtitle', t('menu.subtitle')));
       const nav = el('div', 'nav');
+      const resume = this.h.resumeInfo();
+      if (resume) {
+        const b = this.button(t('menu.continue'), () => this.h.continueCampaign(), true);
+        b.append(el('span', 'btn-sub', resume));
+        nav.append(b);
+      }
       nav.append(
-        this.button(t('menu.campaign'), () => this.h.startCampaign(), true),
+        this.button(t('menu.campaign'), () => this.h.startCampaign(), !resume),
         this.button(t('menu.training'), () => this.h.startLevel('training')),
         this.button(t('menu.select'), () => this.showLevelSelect()),
         this.button(t('menu.settings'), () => {
@@ -167,7 +177,12 @@ export class Menus {
     card.append(head, el('div', 'name', t(lv.titleKey)), el('div', 'desc', t(lv.subKey)));
     const row = el('div', 'row');
     row.append(this.button(t(lv.kind === 'cinematic' ? 'menu.watch' : 'menu.play'), () => this.h.startLevel(lv.id), true));
-    for (const cp of lv.checkpoints?.slice(1) ?? []) row.append(this.button(t(cp.key), () => this.h.startLevel(lv.id, cp.value)));
+    // Checkpoints unlock once reached in play; locked ones are shown greyed out.
+    const reached = this.settings.checkpoints[lv.id] ?? 0;
+    for (const cp of lv.checkpoints?.slice(1) ?? []) {
+      const open = cp.value <= reached;
+      row.append(this.button(`${open ? '' : '🔒 '}${t(cp.key)}`, () => this.h.startLevel(lv.id, cp.value), false, !open));
+    }
     card.append(row);
     return card;
   }

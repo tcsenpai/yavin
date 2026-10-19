@@ -67,6 +67,10 @@ export const mission2: LevelDef = {
   titleKey: 'm2.title',
   subKey: 'm2.sub',
   introKey: 'm2.intro',
+  checkpoints: [
+    { key: 'm2.cp.start', value: 0 },
+    { key: 'm2.cp.fighters', value: 1 },
+  ],
   setup(ctx: LevelContext) {
     const sc = buildSurfaceScene(ctx, 11);
     const need = ctx.difficulty > 1.1 ? 7 : 6;
@@ -289,9 +293,27 @@ export const mission2: LevelDef = {
       yield () => destroyed >= need && fireball !== null;
       ctx.award(500, 'm2.award.towers');
       yield c.say('base', 'l2.base.signals');
+      ctx.reachCheckpoint(1);
       tStart = ctx.world.time;
       yield* tieFight();
     }
-    ctx.run(script());
+
+    if (ctx.checkpoint >= 1) {
+      // Checkpoint "Enemy fighters": surface defences already hit, Porkins already lost.
+      ctx.objectives[0] = { ...ctx.objectives[0], params: { n: need, total: need }, done: true };
+      ctx.objectives[1].done = true;
+      ctx.markers = [];
+      ctx.world.removeShip(porkins);
+      // The deflection tower is already rubble (no second fireball/radio chatter when resuming here).
+      deflection.onDestroyed = null;
+      ctx.world.destroyTower(deflection, null);
+      ctx.run(
+        (function* (): Script {
+          ctx.comms.say('base', 'l2.base.signals');
+          tStart = ctx.world.time;
+          yield* tieFight();
+        })(),
+      );
+    } else ctx.run(script());
   },
 };
