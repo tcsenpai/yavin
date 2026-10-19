@@ -213,7 +213,8 @@ export class Game {
         this.unlockAudio(() => {
           const r = this.resumePoint();
           this.inCampaign = true;
-          this.campaignStats = newStats();
+          // Continuing keeps this session's running totals; only a fresh start (nothing to resume) resets them.
+          if (!r) this.campaignStats = newStats();
           this.openLevel(r?.id ?? campaign[0], r?.checkpoint ?? 0);
         }),
       resumeInfo: () => {
