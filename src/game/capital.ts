@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { createStarDestroyer, type CapitalSubsystem, type StarDestroyerModel } from '../models/ships';
 import { DogfightBrain } from './ai';
-import { Ship } from './ship';
+import { Ship, enemyAgility } from './ship';
 import { newId, segmentSphere, type Targetable } from './types';
 import type { World } from './world';
 
@@ -66,6 +66,8 @@ export class CapitalShip {
   onLaunch: ((tie: Ship) => void) | null = null;
   onSubsystemDestroyed: ((s: Subsystem, killer: Targetable | null) => void) | null = null;
   hangarInterval = 28;
+  /** How many more TIEs the level allows out right now (null = no cap). */
+  launchRoom: (() => number) | null = null;
   private hangarT = 12;
   private listT = 0;
   private burnT = 0;
@@ -196,24 +198,37 @@ export class CapitalShip {
       world.audio.laser('turbolaser', s.pos);
     }
 
-    // Hangar launches.
-    const hangar = this.subsystems.find((s) => s.kind === 'hangar');
-    if (hangar?.alive) {
+    // Hangar launches: a flight of up to three every interval, if the level allows more fighters out.
+    if (this.hangarAlive) {
       this.hangarT -= dt;
       if (this.hangarT <= 0) {
-        this.hangarT = this.hangarInterval / this.difficulty;
-        const down = new THREE.Vector3(0, -1, 0).transformDirection(root.matrixWorld);
-        for (let i = 0; i < 3; i++) {
-          const tie = new Ship('tie', null);
-          tie.pos.copy(hangar.pos).addScaledVector(down, (90 + i * 16) * this.scale);
-          tie.quat.copy(root.quaternion);
-          tie.vel.copy(this.vel);
-          tie.throttle = 1;
-          tie.brain = new DogfightBrain({ skill: 0.55 * this.difficulty, minAltitude: 0 });
-          world.addShip(tie);
-          this.onLaunch?.(tie);
-        }
+        const n = this.launch(world, 3);
+        this.hangarT = n > 0 ? this.hangarInterval / this.difficulty : 1;
       }
     }
+  }
+
+  get hangarAlive(): boolean {
+    return !this.disabled && this.subsystems.some((s) => s.kind === 'hangar' && s.alive);
+  }
+
+  /** Launch up to `count` TIEs from under the hangar bay (capped by `launchRoom`). Returns how many left. */
+  launch(world: World, count: number): number {
+    const hangar = this.subsystems.find((s) => s.kind === 'hangar');
+    if (!hangar?.alive || this.disabled) return 0;
+    const n = Math.min(count, this.launchRoom?.() ?? count);
+    const root = this.model.root;
+    const down = new THREE.Vector3(0, -1, 0).transformDirection(root.matrixWorld);
+    for (let i = 0; i < n; i++) {
+      const tie = new Ship('tie', null, { agility: enemyAgility('tie', this.difficulty) });
+      tie.pos.copy(hangar.pos).addScaledVector(down, (90 + i * 16) * this.scale);
+      tie.quat.copy(root.quaternion);
+      tie.vel.copy(this.vel);
+      tie.throttle = 1;
+      tie.brain = new DogfightBrain({ skill: 0.55 * this.difficulty, minAltitude: 0 });
+      world.addShip(tie);
+      this.onLaunch?.(tie);
+    }
+    return n;
   }
 }

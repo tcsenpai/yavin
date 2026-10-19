@@ -25,7 +25,8 @@ All captured in-engine (real-time, procedural assets).
 
 ## Features
 
-- Full campaign plus free mission select, with cinematic briefing hologram and epilogue.
+- Full campaign plus free mission select, with cinematic briefing hologram and epilogue. In the Star Destroyer battle the TIEs scramble from under the hangar bays, at most eight in the air at once, until the hangar or the destroyer is knocked out.
+- Free battle modes in orbit above Yavin, Tatooine (twin suns), Naboo, Alderaan, Coruscant, Hoth or Endor, all procedural: **Free battle** (choose arena, allies, TIE fighters and Star Destroyers), **Solo** (no wingmen), **Survival** (endless waves of rising difficulty, scored on the wave you reach) and **Random battle**.
 - Arcade flight model with flight assists (auto-level, throttle presets), boost and evasive rolls, deflector shields, S-foils, targeting and a trench-run targeting computer.
 - Cockpit-style HUD: fore and aft sensor scopes, targeting display with target silhouette, range, speed, closing rate and direction.
 - Wingmen and enemy AI with radio chatter shown as subtitles, optionally spoken with the browser's built-in text-to-speech. Wingmen come to your aid when a TIE sits on your tail, and pursuers eventually overshoot.

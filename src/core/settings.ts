@@ -1,4 +1,5 @@
 // Persisted player settings and campaign progress.
+import type { SkirmishConfig } from '../levels/skirmish';
 import type { Quality } from './engine';
 
 export interface Settings {
@@ -17,6 +18,8 @@ export interface Settings {
   aimAssist: boolean;
   /** Furthest checkpoint value reached per mission id (unlocks resuming from it). */
   checkpoints: Record<string, number>;
+  /** Last free-battle setup chosen in the menu. */
+  skirmish: SkirmishConfig;
 }
 
 export const DIFFICULTIES = ['cadet', 'pilot', 'ace', 'jedi'] as const;
@@ -65,6 +68,7 @@ const DEFAULTS: Settings = {
   best: {},
   aimAssist: true,
   checkpoints: {},
+  skirmish: { mode: 'free', arena: 'tatooine', allies: 5, ties: 12, destroyers: 1 },
 };
 
 export function loadSettings(): Settings {

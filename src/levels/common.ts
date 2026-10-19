@@ -1,8 +1,7 @@
 // Spawning helpers shared by levels.
 import * as THREE from 'three';
-import { clamp } from '../core/rng';
 import { DogfightBrain } from '../game/ai';
-import { Ship, type ShipKind } from '../game/ship';
+import { Ship, enemyAgility, type ShipKind } from '../game/ship';
 import type { StringKey } from '../i18n/i18n';
 import type { LevelContext } from './context';
 
@@ -23,10 +22,7 @@ export function spawnPlayer(ctx: LevelContext, pos: THREE.Vector3, heading = new
 }
 
 export function spawnShip(ctx: LevelContext, kind: ShipKind, nameKey: StringKey | null, pos: THREE.Vector3, heading?: THREE.Quaternion, stripe?: number): Ship {
-  // Below Pilot difficulty TIE fighters lose their edge over the X-wing (top speed under ours, slower turns),
-  // so the player can turn the tables and chase them down. Cadet (0.5) gets the full reduction.
-  const easy = kind === 'tie' ? clamp((1 - ctx.difficulty) * 2, 0, 1) : 0;
-  const s = new Ship(kind, nameKey, { stripeColor: stripe, agility: easy > 0 ? { speed: 1 - 0.15 * easy, turn: 1 - 0.4 * easy } : undefined });
+  const s = new Ship(kind, nameKey, { stripeColor: stripe, agility: enemyAgility(kind, ctx.difficulty) });
   s.pos.copy(pos);
   if (heading) s.quat.copy(heading);
   s.vel.set(0, 0, -1).applyQuaternion(s.quat).multiplyScalar(s.speed);

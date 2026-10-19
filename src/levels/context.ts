@@ -17,6 +17,8 @@ export interface LevelStats {
   time: number;
   forceUsed: boolean;
   score: number;
+  /** Survival: last wave reached. */
+  wave?: number;
 }
 
 export interface LevelContext {
@@ -75,10 +77,10 @@ export interface LevelContext {
 
 export interface LevelDef {
   id: string;
-  /** mission = campaign flight; training = tutorial; cinematic = skippable non-interactive scene. */
-  kind: 'mission' | 'training' | 'cinematic';
-  /** Score needed for rank S (A ≥ 75 %, B ≥ 50 %). */
-  par?: number;
+  /** mission = campaign flight; training = tutorial; cinematic = skippable non-interactive scene; skirmish = free battle modes. */
+  kind: 'mission' | 'training' | 'cinematic' | 'skirmish';
+  /** Score needed for rank S (A ≥ 75 %, B ≥ 50 %); a function when it depends on the configured battle. */
+  par?: number | (() => number);
   titleKey: StringKey;
   subKey: StringKey;
   /** Text card shown before the level. */

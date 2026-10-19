@@ -3,59 +3,18 @@
 // and bridges, cut down the TIE waves, then follow Red Leader in toward the surface.
 import * as THREE from 'three';
 import { Rng } from '../core/rng';
-import { DogfightBrain, FormationBrain, steerToward } from '../game/ai';
-import { CapitalShip, type Subsystem } from '../game/capital';
+import { BatteryRunBrain, DogfightBrain, FormationBrain } from '../game/ai';
+import { CapitalShip } from '../game/capital';
 import type { Script } from '../game/script';
 import type { Ship } from '../game/ship';
-import type { World } from '../game/world';
 import type { StringKey } from '../i18n/i18n';
-import { GOLD, RED, lookQuat, spawnPlayer, spawnShip, spawnTies } from './common';
+import { GOLD, RED, lookQuat, spawnPlayer, spawnShip } from './common';
 import type { LevelContext, LevelDef } from './context';
 import { DEATH_STAR_RADIUS, buildEnvironment } from './environment';
 
-/** Y-wing / wingman attack runs on a capital ship's turbolaser batteries. */
-class BatteryRunBrain {
-  private target: Subsystem | null = null;
-  private phase: 'run' | 'extend' = 'run';
-  private t = 0;
-  constructor(
-    private caps: CapitalShip[],
-    private seed: number,
-  ) {}
-
-  update(ship: Ship, world: World, dt: number): void {
-    this.t -= dt;
-    ship.ctrl.fire = false;
-    ship.throttle = 0.9;
-    if (!this.target?.alive) {
-      const all = this.caps.filter((c) => !c.disabled).flatMap((c) => c.subsystems.filter((s) => s.alive && s.kind === 'turbolaser'));
-      this.target = all.length ? all[(this.seed + Math.floor(world.time / 11)) % all.length] : null;
-    }
-    const dir = new THREE.Vector3();
-    const tg = this.target;
-    if (!tg) {
-      ship.forward(dir);
-    } else if (this.phase === 'run') {
-      dir.copy(tg.pos).sub(ship.pos);
-      const d = dir.length();
-      dir.normalize();
-      if (ship.forward().dot(dir) > 0.985 && d < 900) {
-        ship.ctrl.fire = true;
-        ship.fireCannons(world, tg.pos);
-      }
-      if (d < 260) {
-        this.phase = 'extend';
-        this.t = 6;
-      }
-    } else {
-      dir.copy(ship.pos).sub(tg.pos).normalize().add(new THREE.Vector3(0, 0.6, 0)).normalize();
-      if (this.t < 0) this.phase = 'run';
-    }
-    steerToward(ship, dir, 2.2);
-  }
-}
-
 const R = DEATH_STAR_RADIUS;
+/** TIE fighters in the air at once while a hangar still launches. */
+const MAX_TIES_OUT = 8;
 
 export const mission1: LevelDef = {
   id: 'assault',
@@ -130,7 +89,10 @@ export const mission1: LevelDef = {
     const caps = isdPos.map((p, i) => {
       const aim = new THREE.Vector3(i ? -300 : 300, p.y, 1500);
       const c = ctx.world.addCapital(new CapitalShip(i + 1, p, lookQuat(p, aim), 45, ctx.difficulty, ISD_SCALE));
-      c.hangarInterval = i ? 34 : 28;
+      // TIEs only come out of the hangars, at most MAX_TIES_OUT in the air at once, until the hangar
+      // (or the whole destroyer) is knocked out.
+      c.hangarInterval = i ? 16 : 13;
+      c.launchRoom = () => Math.max(0, MAX_TIES_OUT - tieList.filter((t) => t.alive).length);
       c.active = false;
       return c;
     });
@@ -152,6 +114,7 @@ export const mission1: LevelDef = {
     const tieList: Ship[] = [];
     const trackTie = (t: Ship) => {
       tieList.push(t);
+      t.brain = new DogfightBrain({ skill: 0.55 * ctx.difficulty, minAltitude: 0, leash });
       t.onDestroyed = () => {
         if (t.lastAttacker !== player) return;
         ties++;
@@ -180,7 +143,6 @@ export const mission1: LevelDef = {
     let closing = 350; // m/s of scripted closure
     let finishing = false;
     let farTime = 0;
-    let tieRefill = 20;
     const rng = new Rng(9);
     // Shared by every fighter's brain: once the destroyers are out, the dogfight re-centres on the player.
     const leash = { center: battleCentre.clone(), radius: 5500 };
@@ -229,17 +191,6 @@ export const mission1: LevelDef = {
       }
       // Capital ships slow to a standstill once they are in position.
       for (const c of caps) if (!c.disabled && c.root.position.z > -8000) c.vel.multiplyScalar(Math.exp(-0.4 * dt));
-      tieRefill -= dt;
-      const alive = tieList.filter((t) => t.alive).length;
-      if (tieRefill <= 0 && alive < 3 + Math.round(ctx.difficulty) && ties < tieGoal) {
-        tieRefill = (screenBroken ? 8 : 16) / ctx.difficulty;
-        const ang = rng.range(-0.8, 0.8);
-        // Before the screen breaks, waves come from the station; afterwards they come straight at the player.
-        const from = screenBroken
-          ? player.pos.clone().add(new THREE.Vector3(Math.sin(ang * 4) * 2200, rng.range(-300, 400), Math.cos(ang * 4) * 2200))
-          : new THREE.Vector3(Math.sin(ang) * 4500, rng.range(-500, 600), battleCentre.z - Math.cos(ang) * 3500);
-        for (const t of spawnTies(ctx, 3, from, player.pos, 0.6, 0, leash)) trackTie(t);
-      }
       if (!screenBroken && player.alive && player.pos.distanceTo(battleCentre) > 8000) {
         farTime += dt;
         ctx.hint = 'hint.returnBattle';
@@ -248,7 +199,10 @@ export const mission1: LevelDef = {
         ctx.hint = null;
         farTime = 0;
       }
-      if (gens >= 4 && bridges >= 2 && ties >= tieGoal && !finishing) {
+      // With every hangar gone and the last TIE down, there is nobody left to shoot: the objective is met.
+      const tiesDone = ties >= tieGoal || (!caps.some((c) => c.hangarAlive) && tieList.every((t) => !t.alive));
+      if (battle && tiesDone && !ctx.objectives[5].done) ctx.setObjective(5, { done: true });
+      if (gens >= 4 && bridges >= 2 && tiesDone && !finishing) {
         finishing = true;
         ctx.run(diveIn());
       }
@@ -270,7 +224,8 @@ export const mission1: LevelDef = {
       lead.sfoilTarget = 1;
       lead.brain = new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
       golds.forEach((s, i) => (s.brain = new BatteryRunBrain(caps, i * 3 + 1)));
-      for (const t of spawnTies(ctx, 5, battleCentre.clone().add(new THREE.Vector3(0, 300, -1500)), player.pos, 0.55, 0, leash)) trackTie(t);
+      // The first fighters scramble from under the destroyers' hangar bays.
+      for (const c of caps) c.launch(ctx.world, 4);
     }
 
     function* diveIn(): Script {

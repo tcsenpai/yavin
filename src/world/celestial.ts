@@ -8,9 +8,9 @@ import * as THREE from 'three';
 export const SUN_DIRECTION: THREE.Vector3 = new THREE.Vector3(0.55, 0.42, 0.72).normalize();
 
 /** Advanced by updateCelestial; shared by every celestial shader that animates. */
-const timeUniform = { value: 0 };
+export const timeUniform = { value: 0 };
 /** Shared by reference: mutating SUN_DIRECTION propagates to every shader. */
-const sunDirUniform = { value: SUN_DIRECTION };
+export const sunDirUniform = { value: SUN_DIRECTION };
 
 export function updateCelestial(dt: number): void {
   timeUniform.value += dt;
@@ -38,7 +38,7 @@ function mulberry32(seed: number): () => number {
  * GLSL chunks
  * ---------------------------------------------------------------------------------------------- */
 
-const GLSL_NOISE = /* glsl */ `
+export const GLSL_NOISE = /* glsl */ `
 vec3 cMod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 cMod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 cPermute(vec4 x) { return cMod289(((x * 34.0) + 1.0) * x); }
@@ -113,7 +113,7 @@ vec2 h22(vec2 p) {
 `;
 
 /** Vertex shader for bodies lit in object space: passes object position, view & sun directions (object space). */
-const BODY_VERT = /* glsl */ `
+export const BODY_VERT = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_vertex>
 uniform vec3 uSunDir;
@@ -131,12 +131,12 @@ void main() {
 }
 `;
 
-const FRAG_HEAD = /* glsl */ `
+export const FRAG_HEAD = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
 `;
 
-const FRAG_TAIL = /* glsl */ `
+export const FRAG_TAIL = /* glsl */ `
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <logdepthbuf_fragment>
@@ -416,11 +416,22 @@ export function createStarfield(seed: number): THREE.Object3D {
 
 const SUN_DISTANCE = 8e6;
 
+export interface SunOptions {
+  /** World direction toward this sun (default SUN_DIRECTION). */
+  direction?: THREE.Vector3;
+  /** Disc and glow size relative to the main sun. */
+  size?: number;
+  /** HDR sprite tints (linear, may exceed 1). */
+  glowColor?: THREE.Color;
+  discColor?: THREE.Color;
+}
+
 /**
- * Sun disc + glow sprites placed at SUN_DIRECTION * 8e6 inside the returned group.
+ * Sun disc + glow sprites placed at `direction` * 8e6 inside the returned group.
  * Copy the camera position into the returned group each frame (like the starfield).
  */
-export function createSun(): THREE.Object3D {
+export function createSun(opts: SunOptions = {}): THREE.Object3D {
+  const size = opts.size ?? 1;
   const group = new THREE.Group();
   group.name = 'Sun';
 
@@ -432,9 +443,9 @@ export function createSun(): THREE.Object3D {
     transparent: false,
     fog: false,
   });
-  glowMat.color.setRGB(2.0, 1.45, 0.95);
+  glowMat.color.copy(opts.glowColor ?? new THREE.Color(2.0, 1.45, 0.95));
   const glow = new THREE.Sprite(glowMat);
-  glow.scale.setScalar(1.6e6);
+  glow.scale.setScalar(1.6e6 * size);
   glow.frustumCulled = false;
   glow.renderOrder = -999;
 
@@ -446,14 +457,14 @@ export function createSun(): THREE.Object3D {
     transparent: false,
     fog: false,
   });
-  discMat.color.setRGB(7.0, 6.4, 5.6);
+  discMat.color.copy(opts.discColor ?? new THREE.Color(7.0, 6.4, 5.6));
   const disc = new THREE.Sprite(discMat);
-  disc.scale.setScalar(2.6e5);
+  disc.scale.setScalar(2.6e5 * size);
   disc.frustumCulled = false;
   disc.renderOrder = -998;
 
   const anchor = new THREE.Group();
-  anchor.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE);
+  anchor.position.copy(opts.direction ?? SUN_DIRECTION).normalize().multiplyScalar(SUN_DISTANCE);
   anchor.add(glow, disc);
   group.add(anchor);
   return group;
@@ -487,7 +498,7 @@ ${FRAG_TAIL}
 }
 `;
 
-function makeHalo(radius: number, ratio: number, color: THREE.Color, intensity: number): THREE.Mesh {
+export function makeHalo(radius: number, ratio: number, color: THREE.Color, intensity: number): THREE.Mesh {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uSunDir: sunDirUniform,
@@ -509,7 +520,7 @@ function makeHalo(radius: number, ratio: number, color: THREE.Color, intensity: 
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Yavin (gas giant)
+ * Gas giants (Yavin, Endor)
  * ---------------------------------------------------------------------------------------------- */
 
 const GAS_GIANT_FRAG = /* glsl */ `
@@ -517,6 +528,15 @@ ${FRAG_HEAD}
 ${GLSL_NOISE}
 uniform float uTime;
 uniform float uSunIntensity;
+uniform vec3 uC1;
+uniform vec3 uC2;
+uniform vec3 uC3;
+uniform vec3 uC4;
+uniform vec3 uStormA;
+uniform vec3 uStormB;
+uniform float uStorm;
+uniform vec3 uTerm;
+uniform vec3 uAtm;
 varying vec3 vObjPos;
 varying vec3 vViewObj;
 varying vec3 vSunObj;
@@ -542,13 +562,9 @@ void main() {
   float bands = 0.5 + 0.5 * sin(b * 3.1 + sin(b * 1.3));
   float fine = 0.5 + 0.5 * sin(lat * 74.0 + turb * 5.0 + w.y * 3.0);
 
-  vec3 c1 = vec3(0.50, 0.21, 0.06);   // deep ochre
-  vec3 c2 = vec3(0.86, 0.52, 0.22);   // orange cream
-  vec3 c3 = vec3(0.34, 0.11, 0.035);  // rust
-  vec3 c4 = vec3(0.95, 0.76, 0.48);   // pale zone
-  vec3 col = mix(c1, c2, bands);
-  col = mix(col, c3, smoothstep(0.55, 0.95, fine) * 0.4);
-  col = mix(col, c4, smoothstep(0.2, 0.7, turb + w.y * 0.3) * 0.45);
+  vec3 col = mix(uC1, uC2, bands);
+  col = mix(col, uC3, smoothstep(0.55, 0.95, fine) * 0.4);
+  col = mix(col, uC4, smoothstep(0.2, 0.7, turb + w.y * 0.3) * 0.45);
 
   // Great storm riding its band
   float lon = atan(p.z, p.x);
@@ -556,12 +572,12 @@ void main() {
   dl = dl - 6.28318530718 * floor((dl + 3.14159265359) / 6.28318530718);
   vec2 sv = vec2(dl * 0.95 / 0.17, (asin(clamp(lat, -1.0, 1.0)) + 0.33) / 0.075);
   float sr = length(sv);
-  if (sr < 1.8) {
+  if (sr < 1.8 && uStorm > 0.0) {
     float ang = atan(sv.y, sv.x) + (1.0 - sr) * 2.5 + uTime * 0.01;
     float sw = snoise(vec3(cos(ang) * sr * 2.5, sin(ang) * sr * 2.5, t * 3.0)) * 0.5 + 0.5;
     float core = 1.0 - smoothstep(0.2, 1.0, sr);
-    col = mix(col, mix(vec3(0.6, 0.2, 0.07), vec3(0.95, 0.6, 0.35), sw), core * 0.85);
-    col = mix(col, c4, (1.0 - smoothstep(0.0, 0.25, abs(sr - 1.1))) * 0.5);
+    col = mix(col, mix(uStormA, uStormB, sw), core * 0.85 * uStorm);
+    col = mix(col, uC4, (1.0 - smoothstep(0.0, 0.25, abs(sr - 1.1))) * 0.5 * uStorm);
   }
 
   // Polar haze
@@ -570,23 +586,66 @@ void main() {
   float ndl = dot(n, L);
   float diff = clamp((ndl + 0.04) / 1.04, 0.0, 1.0);
   float nv = max(dot(n, V), 0.0);
-  vec3 termTint = mix(vec3(1.0, 0.42, 0.18), vec3(1.0), smoothstep(0.0, 0.35, ndl));
+  vec3 termTint = mix(uTerm, vec3(1.0), smoothstep(0.0, 0.35, ndl));
   vec3 lit = col * termTint * diff * uSunIntensity;
   lit *= mix(0.5, 1.0, pow(nv, 0.4)); // limb darkening
   float fres = pow(1.0 - nv, 3.0);
-  vec3 atm = vec3(1.0, 0.55, 0.25) * fres * clamp(ndl * 1.4 + 0.25, 0.0, 1.0) * 0.8;
+  vec3 atm = uAtm * fres * clamp(ndl * 1.4 + 0.25, 0.0, 1.0) * 0.8;
   gl_FragColor = vec4(lit + atm + col * 0.004, 1.0);
 ${FRAG_TAIL}
 }
 `;
 
-/** Yavin: banded, animated orange gas giant. Recommended radius ~7e7 m at ~3e8 m from the battle. */
-export function createGasGiantYavin(radius: number): THREE.Mesh {
+/** Banding palette of a gas giant (linear colours). */
+export interface GasGiantPalette {
+  name: string;
+  /** Belt, zone, dark streak and pale highlight colours. */
+  bands: readonly [THREE.Color, THREE.Color, THREE.Color, THREE.Color];
+  /** Great storm colours (dark, light) and strength (0 = no storm). */
+  storm: readonly [THREE.Color, THREE.Color];
+  stormStrength: number;
+  /** Terminator tint and fresnel atmosphere colour. */
+  terminator: THREE.Color;
+  atmosphere: THREE.Color;
+  halo: THREE.Color;
+  haloIntensity: number;
+  sunIntensity: number;
+}
+
+export const YAVIN_PALETTE: GasGiantPalette = {
+  name: 'Yavin',
+  bands: [
+    new THREE.Color(0.50, 0.21, 0.06), // deep ochre
+    new THREE.Color(0.86, 0.52, 0.22), // orange cream
+    new THREE.Color(0.34, 0.11, 0.035), // rust
+    new THREE.Color(0.95, 0.76, 0.48), // pale zone
+  ],
+  storm: [new THREE.Color(0.6, 0.2, 0.07), new THREE.Color(0.95, 0.6, 0.35)],
+  stormStrength: 1,
+  terminator: new THREE.Color(1.0, 0.42, 0.18),
+  atmosphere: new THREE.Color(1.0, 0.55, 0.25),
+  halo: new THREE.Color(1.0, 0.58, 0.28),
+  haloIntensity: 1.1,
+  sunIntensity: 1.7,
+};
+
+/** Banded, animated gas giant. Yavin: radius ~7e7 m at ~3e8 m from the battle. */
+export function createGasGiant(radius: number, palette: GasGiantPalette): THREE.Mesh {
+  const [c1, c2, c3, c4] = palette.bands;
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uSunDir: sunDirUniform,
       uTime: timeUniform,
-      uSunIntensity: { value: 1.7 },
+      uSunIntensity: { value: palette.sunIntensity },
+      uC1: { value: c1 },
+      uC2: { value: c2 },
+      uC3: { value: c3 },
+      uC4: { value: c4 },
+      uStormA: { value: palette.storm[0] },
+      uStormB: { value: palette.storm[1] },
+      uStorm: { value: palette.stormStrength },
+      uTerm: { value: palette.terminator },
+      uAtm: { value: palette.atmosphere },
     },
     vertexShader: BODY_VERT,
     fragmentShader: GAS_GIANT_FRAG,
@@ -594,8 +653,8 @@ export function createGasGiantYavin(radius: number): THREE.Mesh {
   });
   const geom = new THREE.SphereGeometry(radius, 160, 80);
   const mesh = new THREE.Mesh(geom, mat);
-  mesh.name = 'Yavin';
-  mesh.add(makeHalo(radius, 1.025, new THREE.Color(1.0, 0.58, 0.28), 1.1));
+  mesh.name = palette.name;
+  mesh.add(makeHalo(radius, 1.025, palette.halo, palette.haloIntensity));
   return mesh;
 }
 

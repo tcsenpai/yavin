@@ -8,6 +8,7 @@ import { AIM_ASSIST, DIFFICULTY_SCALE, HULL_REGEN, loadSettings, saveSettings, t
 import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
 import { buildEnvironment } from '../levels/environment';
+import { resolveSkirmish, skirmishConfig } from '../levels/skirmish';
 import type { XWingModel } from '../models/ships';
 import { Hud, type Feedback, type Objective, type TargetInfo } from '../ui/hud';
 import { Menus, type Rank } from '../ui/menus';
@@ -238,6 +239,14 @@ export class Game {
         this.unlockAudio(() => {
           this.inCampaign = false;
           this.openLevel(id, cp ?? 0);
+        }),
+      startSkirmish: (cfg) =>
+        this.unlockAudio(() => {
+          this.settings.skirmish = cfg;
+          saveSettings(this.settings);
+          Object.assign(skirmishConfig, resolveSkirmish(cfg));
+          this.inCampaign = false;
+          this.openLevel(`skirmish-${cfg.mode}`, 0);
         }),
       continueCampaign: () =>
         this.unlockAudio(() => {
@@ -514,7 +523,7 @@ export class Game {
   }
 
   private rank(score: number): Rank {
-    const par = this.level.par ?? 1000;
+    const par = typeof this.level.par === 'function' ? this.level.par() : (this.level.par ?? 1000);
     return score >= par ? 'S' : score >= par * 0.75 ? 'A' : score >= par * 0.5 ? 'B' : 'C';
   }
 

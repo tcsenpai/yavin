@@ -42,6 +42,15 @@ export const SPECS: Record<ShipKind, ShipSpec> = {
   falcon: { minSpeed: 80, maxSpeed: 270, accel: 80, pitchRate: 1.0, yawRate: 0.8, rollRate: 1.6, hull: 600, shields: 300, radius: 18, fireInterval: 0.09, boltSpeed: 850, damage: 25, bolt: 'red', team: 'rebel' },
 };
 
+/**
+ * Below Pilot difficulty TIE fighters lose their edge over the X-wing (top speed under ours, slower turns),
+ * so the player can turn the tables and chase them down. Cadet (0.5) gets the full reduction.
+ */
+export function enemyAgility(kind: ShipKind, difficulty: number): { speed: number; turn: number } | undefined {
+  const easy = kind === 'tie' ? clamp((1 - difficulty) * 2, 0, 1) : 0;
+  return easy > 0 ? { speed: 1 - 0.15 * easy, turn: 1 - 0.4 * easy } : undefined;
+}
+
 export type Deflectors = 'balanced' | 'front' | 'rear';
 
 export interface ShipControls {

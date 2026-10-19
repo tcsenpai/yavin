@@ -66,6 +66,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .field input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--amber); }
 .field select { font: inherit; background: #111; color: var(--ink); border: 1px solid rgba(255, 179, 71, 0.4); padding: 6px; }
 .field .lang { justify-content: flex-start; }
+.field .lang.wrap { flex-wrap: wrap; }
+.field .count { display: grid; grid-template-columns: 1fr 34px; gap: 10px; align-items: center; }
+.field .count b { color: var(--gold); text-align: right; font-family: ui-monospace, Menlo, monospace; }
 
 .controls { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; align-items: center; font-size: 14px; }
 .controls kbd { font-family: ui-monospace, Menlo, monospace; color: var(--gold); border: 1px solid rgba(255, 225, 74, 0.4); padding: 3px 8px; border-radius: 3px; font-size: 12px; text-align: center; }

@@ -1,7 +1,9 @@
 // DOM overlays: title, crawl, mission select, settings, controls, mission cards, pause, results, ending.
 import { DIFFICULTIES, type Difficulty, type Settings } from '../core/settings';
 import { LANGS, getLang, onLangChange, setLang, t, type Lang, type StringKey } from '../i18n/i18n';
+import { ARENA_IDS } from '../levels/arenas';
 import type { LevelDef, LevelStats } from '../levels/context';
+import { ARENA_NAME, SKIRMISH_LIMITS, SKIRMISH_MODES, SKIRMISH_MODE_KEY, skirmishConfig, type SkirmishConfig } from '../levels/skirmish';
 
 type Render = () => void;
 export type Rank = 'S' | 'A' | 'B' | 'C';
@@ -21,6 +23,8 @@ export interface MenuHandlers {
   quit(): void;
   next(): void;
   uiSound(kind: 'select' | 'confirm'): void;
+  /** Launch a free battle with this setup (random mode is rolled here). */
+  startSkirmish(cfg: SkirmishConfig): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -128,6 +132,7 @@ export class Menus {
         this.button(t('menu.campaign'), () => this.h.startCampaign(), !resume),
         this.button(t('menu.training'), () => this.h.startLevel('training')),
         this.button(t('menu.select'), () => this.showLevelSelect()),
+        this.button(t('menu.skirmish'), () => this.showSkirmish()),
         this.button(t('menu.settings'), () => {
           this.back = () => this.showTitle();
           this.showSettings();
@@ -203,6 +208,73 @@ export class Menus {
       section('menu.sec.campaign', missions.map((l, i) => [l, `${t('menu.mission')} ${i + 1}`]));
       section('menu.sec.extras', this.levels.filter((l) => l.kind === 'cinematic').map((l) => [l, t('menu.cinematic')]));
       panel.append(this.button(t('menu.back'), () => this.showTitle()));
+      this.root.replaceChildren(panel);
+    });
+  }
+
+  /** Free battle setup: mode, arena, and the forces on each side. */
+  showSkirmish(): void {
+    this.back = () => this.showSkirmish();
+    this.setKeys(null);
+    this.show(() => {
+      const cfg = this.settings.skirmish;
+      const save = () => {
+        this.h.settingsChanged(this.settings);
+        this.current?.();
+      };
+      const panel = el('div', 'panel');
+      panel.append(el('h2', '', t('menu.skirmish')));
+      const chips = <T extends string>(label: StringKey, items: readonly T[], name: (v: T) => StringKey, value: T, pick: (v: T) => void) => {
+        const row = el('div', 'field');
+        const box = el('div', 'lang wrap');
+        for (const it of items) {
+          const b = el('button', it === value ? 'chip active' : 'chip', t(name(it)));
+          b.addEventListener('click', () => {
+            pick(it);
+            this.h.uiSound('select');
+            save();
+          });
+          box.append(b);
+        }
+        row.append(el('span', '', t(label)), box);
+        panel.append(row);
+      };
+      const count = (label: StringKey, key: keyof typeof SKIRMISH_LIMITS) => {
+        const [min, max] = SKIRMISH_LIMITS[key];
+        const row = el('label', 'field');
+        const box = el('div', 'count');
+        const input = el('input');
+        input.type = 'range';
+        input.min = String(min);
+        input.max = String(max);
+        input.value = String(cfg[key]);
+        const out = el('b', '', String(cfg[key]));
+        input.addEventListener('input', () => {
+          cfg[key] = Number(input.value);
+          out.textContent = input.value;
+        });
+        input.addEventListener('change', () => this.h.settingsChanged(this.settings));
+        box.append(input, out);
+        row.append(el('span', '', t(label)), box);
+        panel.append(row);
+      };
+      chips('sk.mode', SKIRMISH_MODES, (m) => SKIRMISH_MODE_KEY[m].title, cfg.mode, (m) => (cfg.mode = m));
+      panel.append(el('div', 'foot', t(SKIRMISH_MODE_KEY[cfg.mode].sub)));
+      if (cfg.mode === 'random') panel.append(el('p', 'tip', t('sk.randomNote')));
+      else {
+        chips('sk.arena', ARENA_IDS, (a) => ARENA_NAME[a], cfg.arena, (a) => (cfg.arena = a));
+        if (cfg.mode !== 'solo') count('sk.allies', 'allies');
+        if (cfg.mode === 'survival') panel.append(el('p', 'tip', t('sk.survivalNote')));
+        else {
+          count('sk.ties', 'ties');
+          count('sk.destroyers', 'destroyers');
+        }
+      }
+      const best = this.settings.best[`skirmish-${cfg.mode}`];
+      if (best) panel.append(el('div', 'foot', t('sk.best', { rank: best.rank, score: best.score })));
+      const nav = el('div', 'nav');
+      nav.append(this.button(t('menu.launch'), () => this.h.startSkirmish({ ...cfg }), true), this.button(t('menu.back'), () => this.showTitle()));
+      panel.append(nav);
       this.root.replaceChildren(panel);
     });
   }
@@ -322,10 +394,17 @@ export class Menus {
     });
     this.show(() => {
       const panel = el('div', 'panel card');
-      const idx = this.campaign.filter((id) => this.levels.find((l) => l.id === id)?.kind === 'mission').indexOf(level.id);
-      const pre = level.kind === 'training' ? t('menu.training') : `${t('menu.mission')} ${idx + 1}`;
-      panel.append(el('div', 'pre', pre), el('h2', '', t(level.titleKey)), el('div', 'subtitle', t(level.subKey)), el('p', 'intro', t(level.introKey)));
-      if (level.controlsKey) panel.append(el('p', 'tip', t(level.controlsKey)));
+      if (level.kind === 'skirmish') {
+        // Free battle card: mode, arena and the forces on each side.
+        const c = skirmishConfig;
+        panel.append(el('div', 'pre', t('menu.skirmish')), el('h2', '', t(level.titleKey)), el('div', 'subtitle', t(ARENA_NAME[c.arena])));
+        panel.append(el('p', 'intro', c.mode === 'survival' ? t('sk.survivalNote') : t('sk.summary', { allies: c.allies, ties: c.ties, destroyers: c.destroyers })));
+      } else {
+        const idx = this.campaign.filter((id) => this.levels.find((l) => l.id === id)?.kind === 'mission').indexOf(level.id);
+        const pre = level.kind === 'training' ? t('menu.training') : `${t('menu.mission')} ${idx + 1}`;
+        panel.append(el('div', 'pre', pre), el('h2', '', t(level.titleKey)), el('div', 'subtitle', t(level.subKey)), el('p', 'intro', t(level.introKey)));
+        if (level.controlsKey) panel.append(el('p', 'tip', t(level.controlsKey)));
+      }
       const diff = el('div', 'field');
       diff.append(el('span', '', t('set.difficulty')), this.difficultyChips((d) => this.h.setDifficulty(d)));
       panel.append(diff, el('div', 'foot', t(`set.diff.${difficulty}.desc` as StringKey)));
@@ -374,6 +453,7 @@ export class Menus {
       ['res.accuracy', `${acc}%`],
       ...extra,
     ];
+    if (s.wave) rows.unshift(['res.wave', String(s.wave)]);
     if (s.forceUsed) rows.push(['res.force', '✓']);
     rows.push(['res.score', String(s.score)]);
     for (const [k, v] of rows) box.append(el('span', '', t(k)), el('b', '', v));
@@ -392,7 +472,7 @@ export class Menus {
       const head = el('div', 'result-head');
       head.append(el('div', `rank-big rank-${r.rank}`, r.rank));
       const titles = el('div');
-      titles.append(el('div', 'pre', t('res.complete')), el('h2', '', t(level.titleKey)));
+      titles.append(el('div', 'pre', t(stats.wave ? 'sk.over' : 'res.complete')), el('h2', '', t(level.titleKey)));
       if (r.best) titles.append(el('div', 'best', t('res.newBest')));
       head.append(titles);
       panel.append(head, this.statsTable(stats, [['res.hull', `${Math.round(r.hull)}%`], ['res.bonus', `+${r.bonus}`]]));

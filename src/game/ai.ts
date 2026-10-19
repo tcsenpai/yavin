@@ -1,6 +1,7 @@
 // AI pilots: dogfighting, formation flying and kinematic choreography for scripted moments.
 import * as THREE from 'three';
 import { clamp, damp } from '../core/rng';
+import type { CapitalShip, Subsystem } from './capital';
 import type { Ship } from './ship';
 import type { Targetable } from './types';
 import type { World } from './world';
@@ -31,6 +32,48 @@ export function steerToward(ship: Ship, dir: THREE.Vector3, gain = 2.2, maxBank 
   const bank = -Math.asin(clamp(_r.y, -1, 1));
   const wantBank = clamp(yawErr * 1.4, -maxBank, maxBank);
   ship.ctrl.roll = clamp((wantBank - bank) * 2.2, -1, 1);
+}
+
+/** Y-wing / wingman attack runs on a capital ship's turbolaser batteries. */
+export class BatteryRunBrain {
+  private target: Subsystem | null = null;
+  private phase: 'run' | 'extend' = 'run';
+  private t = 0;
+  constructor(
+    private caps: CapitalShip[],
+    private seed: number,
+  ) {}
+
+  update(ship: Ship, world: World, dt: number): void {
+    this.t -= dt;
+    ship.ctrl.fire = false;
+    ship.throttle = 0.9;
+    if (!this.target?.alive) {
+      const all = this.caps.filter((c) => !c.disabled).flatMap((c) => c.subsystems.filter((s) => s.alive && s.kind === 'turbolaser'));
+      this.target = all.length ? all[(this.seed + Math.floor(world.time / 11)) % all.length] : null;
+    }
+    const dir = new THREE.Vector3();
+    const tg = this.target;
+    if (!tg) {
+      ship.forward(dir);
+    } else if (this.phase === 'run') {
+      dir.copy(tg.pos).sub(ship.pos);
+      const d = dir.length();
+      dir.normalize();
+      if (ship.forward().dot(dir) > 0.985 && d < 900) {
+        ship.ctrl.fire = true;
+        ship.fireCannons(world, tg.pos);
+      }
+      if (d < 260) {
+        this.phase = 'extend';
+        this.t = 6;
+      }
+    } else {
+      dir.copy(ship.pos).sub(tg.pos).normalize().add(new THREE.Vector3(0, 0.6, 0)).normalize();
+      if (this.t < 0) this.phase = 'run';
+    }
+    steerToward(ship, dir, 2.2);
+  }
 }
 
 /** Pull up if the hull (or trench floor) is close ahead. Returns true while avoiding. */
