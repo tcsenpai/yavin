@@ -469,6 +469,8 @@ export class Weapons {
           hit = t;
         }
       }
+      // A ship in an evasive barrel roll slips most incoming bolts.
+      if (hit && 'evadeT' in hit && typeof hit.evadeT === 'number' && hit.evadeT > 0 && Math.random() < 0.65) hit = null;
       if (hit) {
         _v.lerpVectors(b.prev, b.pos, best);
         hit.takeDamage(b.damage, b.prev, b.owner);

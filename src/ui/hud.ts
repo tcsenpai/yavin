@@ -24,6 +24,21 @@ export interface TargetingComputer {
   scroll: number;
 }
 
+/** What the targeting display knows about the selected target. */
+export interface TargetInfo {
+  name: string;
+  /** Silhouette family for the targeting display. */
+  kind: 'tie' | 'tieadv' | 'tower' | 'wall' | 'turbolaser' | 'shieldGen' | 'bridge' | 'hangar' | 'other';
+  hull: number;
+  shielded: boolean;
+  distance: number;
+  /** Target speed (m/s) and closing rate (m/s, positive = range shrinking). */
+  speed: number;
+  closing: number;
+  /** Unit direction to the target in the player's local frame (-z = ahead, +y = up). */
+  dir: THREE.Vector3;
+}
+
 export interface HudState {
   world: World;
   player: Ship | null;
@@ -47,7 +62,7 @@ export interface HudState {
   enemyOnTail: boolean;
   /** Aim assist currently bending the bolts onto a target. */
   aimAssist: boolean;
-  targetInfo: { name: string; hull: number; shielded: boolean; distance: number } | null;
+  targetInfo: TargetInfo | null;
   feedback: Feedback;
   /** One-line key reminder (bottom centre). */
   prompts: string | null;
@@ -185,20 +200,147 @@ export class Hud {
     this.ctx.globalAlpha = 1;
   }
 
-  private drawTargetPanel(ti: { name: string; hull: number; shielded: boolean; distance: number }): void {
-    const w = 220;
-    const x = this.w - w - 30;
-    const y = this.h - 260;
-    this.panel(x, y, w, 62);
-    // Shrink long names (e.g. "Turbolaser battery") so they never run into the distance readout.
+  /**
+   * Targeting display (in the spirit of the 1993 X-Wing CMD screen): vector silhouette of the target,
+   * name, range, speed, closing rate, hull/shield bar and a direction ball showing where it is
+   * relative to the nose (centre = dead ahead, rim = 90°, hollow = behind).
+   */
+  private drawTargetPanel(ti: TargetInfo): void {
+    const c = this.ctx;
+    const w = 300;
+    const h = 122;
+    const x = this.w - w - 24;
+    const y = this.h - 190 - h - 14;
+    this.panel(x, y, w, h);
+    // Silhouette box.
+    const sx = x + 50;
+    const sy = y + 62;
+    c.strokeStyle = 'rgba(255,179,71,0.25)';
+    c.lineWidth = 1;
+    c.strokeRect(x + 10, y + 22, 80, 80);
+    this.drawSilhouette(ti.kind, sx, sy, 30, ti.shielded ? CYAN : RED);
+    // Name (shrunk to fit) and readouts.
     const name = ti.name.toUpperCase();
     let size = 12;
-    this.ctx.font = `700 ${size}px ${FONT}`;
-    while (size > 8 && this.ctx.measureText(name).width > w - 90) this.ctx.font = `700 ${--size}px ${FONT}`;
-    this.text(name, x + 12, y + 20, size, RED, 'left', FONT, '700');
-    this.text(`${Math.round(ti.distance)} m`, x + w - 12, y + 20, 11, AMBER, 'right', MONO);
-    this.bar(x + 12, y + 30, w - 24, 9, ti.hull, ti.shielded ? CYAN : RED);
-    if (ti.shielded) this.text(t('hud.shielded'), x + 12, y + 55, 10, CYAN, 'left', FONT, '700');
+    c.font = `700 ${size}px ${FONT}`;
+    while (size > 8 && c.measureText(name).width > w - 112) c.font = `700 ${--size}px ${FONT}`;
+    this.text(name, x + 100, y + 22, size, RED, 'left', FONT, '700');
+    const lbl = 'rgba(255,179,71,0.7)';
+    const vx = x + 226;
+    this.text(t('hud.tgt.range'), x + 100, y + 42, 9, lbl, 'left', FONT, '600');
+    this.text(`${Math.round(ti.distance)} m`, vx, y + 42, 12, AMBER, 'right', MONO);
+    this.text(t('hud.tgt.speed'), x + 100, y + 58, 9, lbl, 'left', FONT, '600');
+    this.text(`${Math.round(ti.speed * 3.6)} km/h`, vx, y + 58, 12, AMBER, 'right', MONO);
+    this.text(t('hud.tgt.closing'), x + 100, y + 74, 9, lbl, 'left', FONT, '600');
+    this.text(`${ti.closing >= 0 ? '+' : ''}${Math.round(ti.closing)} m/s`, vx, y + 74, 12, ti.closing > 0 ? AMBER : CYAN, 'right', MONO);
+    this.bar(x + 100, y + 86, vx - x - 100, 9, ti.hull, ti.shielded ? CYAN : RED);
+    if (ti.shielded) {
+      const msg = t('hud.shielded');
+      let fs = 9;
+      c.font = `700 ${fs}px ${FONT}`;
+      while (fs > 6 && c.measureText(msg).width > w - 110) c.font = `700 ${--fs}px ${FONT}`;
+      this.text(msg, x + 100, y + 112, fs, CYAN, 'left', FONT, '700');
+    }
+    // Direction ball.
+    const bx = x + w - 34;
+    const by = y + 58;
+    const br = 24;
+    c.strokeStyle = 'rgba(255,179,71,0.45)';
+    c.beginPath();
+    c.arc(bx, by, br, 0, Math.PI * 2);
+    c.moveTo(bx - br, by);
+    c.lineTo(bx + br, by);
+    c.moveTo(bx, by - br);
+    c.lineTo(bx, by + br);
+    c.stroke();
+    const ang = Math.acos(clamp(-ti.dir.z, -1, 1)); // 0 = ahead … π = behind
+    const az = Math.atan2(ti.dir.x, ti.dir.y);
+    const rr = (Math.min(ang, Math.PI / 2) / (Math.PI / 2)) * br;
+    const dx = bx + Math.sin(az) * rr;
+    const dy = by - Math.cos(az) * rr;
+    c.fillStyle = RED;
+    c.strokeStyle = RED;
+    c.lineWidth = 2;
+    c.beginPath();
+    c.arc(dx, dy, 4, 0, Math.PI * 2);
+    if (ti.dir.z < 0) c.fill();
+    else c.stroke();
+    this.text(t(ti.dir.z < 0 ? 'hud.tgt.ahead' : 'hud.tgt.behind'), bx, by + br + 12, 9, 'rgba(255,179,71,0.7)', 'center', FONT, '600');
+  }
+
+  /** Minimal vector silhouettes so the target reads at a glance. */
+  private drawSilhouette(kind: TargetInfo['kind'], cx: number, cy: number, s: number, color: string): void {
+    const c = this.ctx;
+    c.strokeStyle = color;
+    c.lineWidth = 1.6;
+    c.beginPath();
+    const hex = (ox: number, w: number, hh: number) => {
+      c.moveTo(ox, cy - hh);
+      c.lineTo(ox + w, cy - hh * 0.5);
+      c.lineTo(ox + w, cy + hh * 0.5);
+      c.lineTo(ox, cy + hh);
+      c.lineTo(ox - w, cy + hh * 0.5);
+      c.lineTo(ox - w, cy - hh * 0.5);
+      c.closePath();
+    };
+    switch (kind) {
+      case 'tie':
+      case 'tieadv':
+        if (kind === 'tie') {
+          hex(cx - s * 0.8, s * 0.12, s * 0.9);
+          hex(cx + s * 0.8, s * 0.12, s * 0.9);
+        } else {
+          c.moveTo(cx - s * 0.5, cy - s * 0.9);
+          c.lineTo(cx - s * 0.95, cy);
+          c.lineTo(cx - s * 0.5, cy + s * 0.9);
+          c.moveTo(cx + s * 0.5, cy - s * 0.9);
+          c.lineTo(cx + s * 0.95, cy);
+          c.lineTo(cx + s * 0.5, cy + s * 0.9);
+        }
+        c.moveTo(cx + s * 0.25, cy);
+        c.arc(cx, cy, s * 0.25, 0, Math.PI * 2);
+        c.moveTo(cx - s * 0.68, cy);
+        c.lineTo(cx - s * 0.25, cy);
+        c.moveTo(cx + s * 0.25, cy);
+        c.lineTo(cx + s * 0.68, cy);
+        break;
+      case 'tower':
+      case 'wall':
+      case 'turbolaser':
+        c.rect(cx - s * 0.3, cy - s * 0.2, s * 0.6, s * 0.9);
+        c.rect(cx - s * 0.45, cy - s * 0.5, s * 0.9, s * 0.3);
+        c.moveTo(cx - s * 0.15, cy - s * 0.5);
+        c.lineTo(cx - s * 0.15, cy - s * 0.95);
+        c.moveTo(cx + s * 0.15, cy - s * 0.5);
+        c.lineTo(cx + s * 0.15, cy - s * 0.95);
+        break;
+      case 'shieldGen':
+        c.arc(cx, cy, s * 0.6, Math.PI, 0);
+        c.lineTo(cx - s * 0.6, cy);
+        c.moveTo(cx - s * 0.2, cy);
+        c.lineTo(cx - s * 0.2, cy + s * 0.5);
+        c.moveTo(cx + s * 0.2, cy);
+        c.lineTo(cx + s * 0.2, cy + s * 0.5);
+        break;
+      case 'bridge':
+      case 'hangar':
+        // Star Destroyer profile.
+        c.moveTo(cx - s, cy + s * 0.3);
+        c.lineTo(cx + s, cy + s * 0.15);
+        c.lineTo(cx + s, cy - s * 0.05);
+        c.lineTo(cx + s * 0.4, cy - s * 0.25);
+        c.lineTo(cx + s * 0.4, cy - s * 0.55);
+        c.lineTo(cx + s * 0.75, cy - s * 0.55);
+        c.lineTo(cx + s * 0.75, cy - s * 0.25);
+        c.lineTo(cx - s, cy + s * 0.3);
+        break;
+      default:
+        c.moveTo(cx, cy - s * 0.8);
+        c.lineTo(cx + s * 0.25, cy + s * 0.6);
+        c.lineTo(cx - s * 0.25, cy + s * 0.6);
+        c.closePath();
+    }
+    c.stroke();
   }
 
   private drawSkip(p: number): void {
@@ -285,7 +427,10 @@ export class Hud {
     c.lineTo(sx, sy + 6);
     c.stroke();
     if (!p.canFire) this.text(t('hud.sfoilsClosed'), this.w / 2, this.h / 2 + 60, 13, AMBER, 'center');
-    if (s.enemyOnTail && Math.floor(this.time * 3) % 2 === 0) this.text(t('hud.enemyTail'), this.w / 2, this.h / 2 - 70, 15, RED, 'center');
+    if (s.enemyOnTail && Math.floor(this.time * 3) % 2 === 0) {
+      this.text(t('hud.enemyTail'), this.w / 2, this.h / 2 - 70, 15, RED, 'center');
+      this.text(t('hud.evadeHint'), this.w / 2, this.h / 2 - 52, 11, AMBER, 'center', FONT, '600');
+    }
   }
 
   private bracket(x: number, y: number, r: number, color: string, width = 1.6): void {
@@ -483,8 +628,10 @@ export class Hud {
     this.text(t('hud.hull'), tx, y + 24, 11, AMBER);
     this.bar(tx, y + 30, 108, 9, hullFrac, hullFrac > 0.25 ? AMBER : RED);
     this.text(t('hud.speed'), tx, y + 58, 11, AMBER);
-    this.bar(tx, y + 64, 108, 9, p.throttle, '#ffd68a');
+    this.bar(tx, y + 64, 108, 9, p.throttle, p.maneuvering ? CYAN : '#ffd68a');
     this.text(`${Math.round(p.speed * 3.6)} km/h`, tx + 108, y + 58, 11, AMBER, 'right', MONO);
+    // Boost energy: thin strip under the speed bar.
+    this.bar(tx, y + 76, 108, 3, p.boostEnergy, p.boostEnergy > 0.25 ? CYAN : RED);
     this.text(`${t('hud.torpedoes')}: ${s.torpedoes}`, tx, y + 92, 14, AMBER, 'left', BODY, '700');
     this.text(`${t('hud.sfoils')}: ${t(p.sfoils > 0.97 ? 'hud.sfoils.open' : p.sfoils < 0.03 ? 'hud.sfoils.closed' : 'hud.sfoils.moving')}`, tx, y + 110, 14, p.sfoils > 0.97 ? AMBER : CYAN, 'left', BODY, '700');
     this.text(`${t('hud.deflectors')}: ${t(`hud.defl.${p.deflectors}` as StringKey)}`, tx, y + 128, 14, CYAN, 'left', BODY, '700');
@@ -492,14 +639,29 @@ export class Hud {
     this.text('RED 5 · T-65', x + 14, y + 160, 10, 'rgba(255,179,71,0.6)', 'left', MONO);
   }
 
+  /**
+   * Twin sensor scopes (front / rear hemispheres, as in the classic X-Wing cockpit): a contact's distance from
+   * the scope centre is its angle off the nose (front) or tail (rear); rim = 90°. Blip size grows with proximity,
+   * brightness fades with range. Lets you see who is on your six without looking back.
+   */
   private drawScanner(s: HudState): void {
     const p = s.player!;
+    const R = 60;
+    const cy = this.h - R - 34;
+    const scopes: [number, boolean, StringKey][] = [
+      [this.w - R * 3 - 52, true, 'hud.sensor.front'],
+      [this.w - R - 24, false, 'hud.sensor.rear'],
+    ];
+    _inv.copy(p.quat).invert();
+    for (const [cx, front, label] of scopes) this.drawScope(s, cx, cy, R, front, label);
+  }
+
+  private drawScope(s: HudState, cx: number, cy: number, R: number, front: boolean, label: StringKey): void {
     const c = this.ctx;
-    const R = 78;
-    const cx = this.w - R - 30;
-    const cy = this.h - R - 30;
-    c.fillStyle = 'rgba(8,12,10,0.5)';
-    c.strokeStyle = 'rgba(255,179,71,0.45)';
+    const p = s.player!;
+    const range = 3500;
+    c.fillStyle = 'rgba(8,12,10,0.55)';
+    c.strokeStyle = front ? 'rgba(255,179,71,0.5)' : 'rgba(255,90,70,0.55)';
     c.lineWidth = 1;
     c.beginPath();
     c.arc(cx, cy, R, 0, Math.PI * 2);
@@ -511,44 +673,35 @@ export class Hud {
     c.lineTo(cx + R, cy);
     c.moveTo(cx, cy - R);
     c.lineTo(cx, cy + R);
-    c.strokeStyle = 'rgba(255,179,71,0.18)';
+    c.strokeStyle = 'rgba(255,179,71,0.16)';
     c.stroke();
-    // Sweep.
-    const a = (this.time * 2) % (Math.PI * 2);
-    const grd = c.createConicGradient(a, cx, cy);
-    grd.addColorStop(0, 'rgba(255,179,71,0.25)');
-    grd.addColorStop(0.08, 'rgba(255,179,71,0)');
-    grd.addColorStop(1, 'rgba(255,179,71,0)');
-    c.fillStyle = grd;
-    c.beginPath();
-    c.arc(cx, cy, R, 0, Math.PI * 2);
-    c.fill();
-    const range = 2500;
-    _inv.copy(p.quat).invert();
+    // The selected target and objective markers are always tracked; other contacts only within sensor range.
+    const blip = (pos: THREE.Vector3, color: string, square: boolean, size: number, always: boolean) => {
+      _p.copy(pos).sub(p.pos).applyQuaternion(_inv);
+      const d = _p.length();
+      if (d < 1 || (!always && d > range) || (_p.z < 0) !== front) return;
+      _p.divideScalar(d);
+      const ang = Math.acos(clamp(front ? -_p.z : _p.z, -1, 1)); // 0 at the scope centre
+      const az = Math.atan2(_p.x, _p.y);
+      const rr = (Math.min(ang, Math.PI / 2) / (Math.PI / 2)) * (R - 4);
+      const bx = cx + Math.sin(az) * rr;
+      const by = cy - Math.cos(az) * rr;
+      const sz = size * (d < 600 ? 1.6 : d < 1500 ? 1.2 : 0.9);
+      c.globalAlpha = 0.35 + 0.65 * (1 - Math.min(d, range) / range);
+      c.fillStyle = color;
+      c.beginPath();
+      if (square) c.rect(bx - sz, by - sz, sz * 2, sz * 2);
+      else c.arc(bx, by, sz, 0, Math.PI * 2);
+      c.fill();
+      c.globalAlpha = 1;
+    };
     for (const tg of s.world.targetables) {
       if (tg === p) continue;
-      _p.copy(tg.pos).sub(p.pos).applyQuaternion(_inv);
-      const d = Math.hypot(_p.x, _p.z);
-      const k = Math.min(d, range) / range;
-      const ang = Math.atan2(_p.x, -_p.z);
-      const bx = cx + Math.sin(ang) * k * R;
-      const by = cy - Math.cos(ang) * k * R;
-      c.fillStyle = tg.team === 'empire' ? (tg === s.target ? '#ffffff' : RED) : GREEN;
-      const above = _p.y > 0;
-      c.beginPath();
-      if (above) c.rect(bx - 2.5, by - 2.5, 5, 5);
-      else c.arc(bx, by, 2.5, 0, Math.PI * 2);
-      c.fill();
+      const sel = tg === s.target;
+      blip(tg.pos, sel ? '#ffffff' : tg.team === 'empire' ? RED : GREEN, sel, sel ? 3 : 2.4, sel);
     }
-    for (const m of s.markers) {
-      _p.copy(m.pos).sub(p.pos).applyQuaternion(_inv);
-      const d = Math.hypot(_p.x, _p.z);
-      const k = Math.min(d, range) / range;
-      const ang = Math.atan2(_p.x, -_p.z);
-      c.fillStyle = '#ffe14a';
-      c.fillRect(cx + Math.sin(ang) * k * R - 3, cy - Math.cos(ang) * k * R - 3, 6, 6);
-    }
-    this.text(t('hud.scanner'), cx, cy - R - 8, 10, 'rgba(255,179,71,0.7)', 'center');
+    for (const m of s.markers) blip(m.pos, '#ffe14a', true, 2.6, true);
+    this.text(t(label), cx, cy - R - 8, 10, front ? 'rgba(255,179,71,0.75)' : 'rgba(255,110,90,0.85)', 'center', FONT, '600');
   }
 
   private drawObjectives(s: HudState): void {

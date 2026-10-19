@@ -12,6 +12,8 @@ export interface FlightInput {
   lookBack: boolean;
   /** Held: skip a cinematic (Enter / Space / gamepad A). */
   skipHeld: boolean;
+  /** Held: engine boost (Shift / gamepad d-pad up). */
+  boost: boolean;
   stick: { x: number; y: number }; // virtual mouse stick, for the HUD cursor
 }
 
@@ -31,7 +33,9 @@ export type Action =
   | 'throttle2'
   | 'throttle3'
   | 'throttle4'
-  | 'skipStep';
+  | 'skipStep'
+  | 'evadeLeft'
+  | 'evadeRight';
 
 const ACTION_KEYS: Record<Action, string[]> = {
   sfoils: ['KeyX'],
@@ -50,6 +54,9 @@ const ACTION_KEYS: Record<Action, string[]> = {
   throttle3: ['Digit3'],
   throttle4: ['Digit4'],
   skipStep: ['KeyN'],
+  // Triggered by double-tapping the roll keys (see keydown handler), not by a single key.
+  evadeLeft: [],
+  evadeRight: [],
 };
 
 const GAMEPAD_ACTIONS: Partial<Record<Action, number>> = {
@@ -63,6 +70,8 @@ const GAMEPAD_ACTIONS: Partial<Record<Action, number>> = {
   torpedo: 1, // B
   level: 10, // left stick click
   targetAttacker: 11, // right stick click
+  evadeLeft: 14, // d-pad left
+  evadeRight: 15, // d-pad right
 };
 
 export class Input {
@@ -77,6 +86,8 @@ export class Input {
   private padPrev: boolean[] = [];
   private lastMouseMove = 0;
   private kb = { pitch: 0, yaw: 0, roll: 0 };
+  /** Last key-down time per roll key, for double-tap evasive rolls. */
+  private lastTap: Record<string, number> = {};
 
   constructor(private canvas: HTMLElement) {
     window.addEventListener('keydown', (e) => {
@@ -84,6 +95,13 @@ export class Input {
       this.keys.add(e.code);
       for (const [action, codes] of Object.entries(ACTION_KEYS) as [Action, string[]][]) {
         if (codes.includes(e.code)) this.pressed.add(action);
+      }
+      // Double-tap a roll key (within 300 ms) for an evasive barrel roll.
+      const evade = { KeyA: 'evadeLeft', KeyQ: 'evadeLeft', KeyD: 'evadeRight', KeyE: 'evadeRight' }[e.code] as Action | undefined;
+      if (evade) {
+        const now = performance.now();
+        if (now - (this.lastTap[e.code] ?? -1e9) < 300) this.pressed.add(evade);
+        this.lastTap[e.code] = now;
       }
       if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
     });
@@ -171,7 +189,7 @@ export class Input {
     yaw += this.kb.yaw;
     let roll = this.kb.roll;
     let throttle = 0;
-    if (this.key('KeyW', 'ShiftLeft')) throttle += 1;
+    if (this.key('KeyW')) throttle += 1;
     if (this.key('KeyS', 'ControlLeft')) throttle -= 1;
     let fire = this.mouseFire || this.key('Space');
     // Torpedo is edge-triggered from key/mouse events so even sub-frame taps register.
@@ -206,6 +224,7 @@ export class Input {
       torpedo,
       lookBack: this.key('KeyB') || !!pad?.buttons[13]?.pressed,
       skipHeld: this.key('Enter', 'Space', 'NumpadEnter') || !!pad?.buttons[0]?.pressed,
+      boost: this.key('ShiftLeft', 'ShiftRight') || !!pad?.buttons[12]?.pressed,
       stick: { x: this.stickX, y: this.stickY },
     };
   }

@@ -285,6 +285,8 @@ export class Menus {
         ['Mouse', 'ctl.mouse'],
         ['W / S · 1–4', 'ctl.throttle'],
         ['A / D · Q / E', 'ctl.roll'],
+        ['Shift', 'ctl.boost'],
+        ['2× A / D · Q / E', 'ctl.evade'],
         ['↑ ↓ ← →', 'ctl.arrows'],
         ['Z', 'ctl.level'],
         ['LMB / Space', 'ctl.fire'],

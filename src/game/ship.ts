@@ -95,6 +95,13 @@ export class Ship implements Targetable {
   autoLevel = false;
   /** Multiplier on incoming damage (player: difficulty). */
   damageTakenScale = 1;
+  /** Boost energy 0..1 and whether the pilot is holding boost. */
+  boostEnergy = 1;
+  boosting = false;
+  /** Evasive roll timer / direction / cooldown (seconds). */
+  evadeT = 0;
+  evadeDir = 0;
+  evadeCooldown = 0;
 
   constructor(
     readonly kind: ShipKind,
@@ -194,19 +201,32 @@ export class Ship implements Targetable {
     }
     const s = this.spec;
     const k = damp(this.isPlayer ? 3.8 : 5, dt);
-    this.angVel.x += (this.ctrl.pitch * s.pitchRate - this.angVel.x) * k;
-    this.angVel.y += (-this.ctrl.yaw * s.yawRate - this.angVel.y) * k;
+    // Boost: a few seconds of extra speed, slightly wider turns; energy recharges when not boosting.
+    const boostingNow = this.boosting && this.boostEnergy > 0;
+    this.boostEnergy = clamp(this.boostEnergy + (boostingNow ? -dt / 3 : dt / 7), 0, 1);
+    const turn = boostingNow ? 0.8 : 1;
+    this.angVel.x += (this.ctrl.pitch * s.pitchRate * turn - this.angVel.x) * k;
+    this.angVel.y += (-this.ctrl.yaw * s.yawRate * turn - this.angVel.y) * k;
     this.angVel.z += (-this.ctrl.roll * s.rollRate - this.angVel.z) * k;
+    // Evasive barrel roll: a fast full roll with a sideways jink (incoming fire mostly misses meanwhile).
+    this.evadeCooldown -= dt;
+    if (this.evadeT > 0) {
+      this.evadeT -= dt;
+      this.angVel.z = -this.evadeDir * 7;
+    }
     _e.set(this.angVel.x * dt, this.angVel.y * dt, this.angVel.z * dt, 'YXZ');
     _q.setFromEuler(_e);
     this.quat.multiply(_q).normalize();
 
     // S-foils closed: cruise configuration, cannons offline, slightly faster.
-    const target = s.minSpeed + (s.maxSpeed - s.minSpeed) * clamp(this.throttle, 0, 1) + (this.kind === 'xwing' ? (1 - this.sfoils) * 15 : 0);
-    const ds = clamp(target - this.speed, -s.accel * dt, s.accel * dt);
+    let target = s.minSpeed + (s.maxSpeed - s.minSpeed) * clamp(this.throttle, 0, 1) + (this.kind === 'xwing' ? (1 - this.sfoils) * 15 : 0);
+    if (boostingNow) target += s.maxSpeed * 0.6;
+    const accel = s.accel * (boostingNow ? 3 : 1);
+    const ds = clamp(target - this.speed, -accel * dt, accel * dt);
     this.speed += ds;
     this.forward(_fwd).multiplyScalar(this.speed);
     this.vel.lerp(_fwd, damp(3.2, dt));
+    if (this.evadeT > 0) this.vel.addScaledVector(this.right(_m), this.evadeDir * 45 * dt * 8);
     this.pos.addScaledVector(this.vel, dt);
 
     if (this.kind === 'xwing') {
@@ -222,6 +242,20 @@ export class Ship implements Targetable {
       this.shieldFore = Math.min(this.shieldMax('fore'), this.shieldFore + s.shields * 0.12 * dt);
       this.shieldAft = Math.min(this.shieldMax('aft'), this.shieldAft + s.shields * 0.12 * dt);
     }
+  }
+
+  /** Start an evasive barrel roll (dir: -1 left, +1 right). Returns false while on cooldown. */
+  startEvade(dir: number): boolean {
+    if (this.evadeCooldown > 0 || this.evadeT > 0) return false;
+    this.evadeDir = dir;
+    this.evadeT = 0.9;
+    this.evadeCooldown = 2.4;
+    return true;
+  }
+
+  /** True while boosting or evading: pursuers find it much harder to track. */
+  get maneuvering(): boolean {
+    return this.evadeT > 0 || (this.boosting && this.boostEnergy > 0);
   }
 
   get canFire(): boolean {

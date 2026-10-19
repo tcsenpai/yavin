@@ -9,10 +9,11 @@ import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
 import { buildEnvironment } from '../levels/environment';
 import type { XWingModel } from '../models/ships';
-import { Hud, type Feedback, type Objective } from '../ui/hud';
+import { Hud, type Feedback, type Objective, type TargetInfo } from '../ui/hud';
 import { Menus, type Rank } from '../ui/menus';
 import { Subsystem } from './capital';
-import { Comms } from './comms';
+import { DogfightBrain } from './ai';
+import { Comms, type Speaker } from './comms';
 import { ScriptRunner, type Script } from './script';
 import { Ship } from './ship';
 import { Tower } from './tower';
@@ -31,6 +32,17 @@ const _q = new THREE.Quaternion();
 const _inv = new THREE.Quaternion();
 
 const newStats = (): LevelStats => ({ kills: 0, towers: 0, shots: 0, hits: 0, time: 0, forceUsed: false, score: 0 });
+
+/** Named wingmen who can come to the player's aid, and the radio voice they use. */
+const HELPER_SPEAKER: Partial<Record<StringKey, Speaker>> = {
+  'spk.wedge': 'wedge',
+  'spk.biggs': 'biggs',
+  'spk.porkins': 'porkins',
+  'spk.redLeader': 'redLeader',
+  'spk.red10': 'red10',
+  'spk.red9': 'red9',
+  'spk.goldLeader': 'goldLeader',
+};
 
 /** Points and display name for anything the player destroys. */
 function killValue(target: Targetable): { points: number; name: StringKey } | null {
@@ -54,6 +66,14 @@ function hullFraction(target: Targetable): number {
   if (target instanceof Ship) return clamp(target.hull / target.spec.hull, 0, 1);
   if (target instanceof Tower || target instanceof Subsystem) return clamp(target.hp / target.maxHp, 0, 1);
   return 1;
+}
+
+/** Silhouette family shown on the targeting display. */
+function targetKind(target: Targetable): TargetInfo['kind'] {
+  if (target instanceof Ship) return target.kind === 'tie' || target.kind === 'tieadv' ? target.kind : 'other';
+  if (target instanceof Tower) return target.kind === 'tower' ? 'tower' : 'wall';
+  if (target instanceof Subsystem) return target.kind;
+  return 'other';
 }
 
 class Ctx implements LevelContext {
@@ -179,10 +199,14 @@ export class Game {
   private camQuat = new THREE.Quaternion();
   private camPos = new THREE.Vector3();
   private deadTime = 0;
+  private readonly tgtDir = new THREE.Vector3();
   private repairChirp = 0;
   private skipT = 0;
   private stick = { x: 0, y: 0 };
   private enemyOnTail = false;
+  private tailSince = 0;
+  private helpCooldown = 10;
+  private helper: { ship: Ship; chaser: Ship; prevBrain: Ship['brain']; prevScale: number; until: number; speaker: Speaker } | null = null;
   private feedback: Feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
 
   constructor(
@@ -396,6 +420,9 @@ export class Game {
       this.lockT = 0;
       this.skipT = 0;
       this.manualTargetAt = -99;
+      this.helper = null;
+      this.tailSince = 0;
+      this.helpCooldown = 10;
       if (ctx.player) {
         this.camQuat.copy(ctx.player.quat);
         this.camPos.copy(ctx.player.pos);
@@ -581,6 +608,10 @@ export class Game {
     p.ctrl.pitch = inp.pitch;
     p.ctrl.yaw = inp.yaw;
     p.ctrl.roll = inp.roll;
+    p.boosting = inp.boost;
+    for (const [action, dir] of [['evadeLeft', -1], ['evadeRight', 1]] as const) {
+      if (this.input.consume(action) && p.startEvade(dir)) this.audio.sfoils();
+    }
     if (this.input.consume('level')) p.autoLevel = !p.autoLevel;
     if (p.autoLevel) this.applyAutoLevel(p, inp);
     p.throttle = clamp(p.throttle + inp.throttleDelta * 0.55 * dt, 0, 1);
@@ -731,7 +762,27 @@ export class Game {
     }
   }
 
-  private checkTail(p: Ship, world: World): boolean {
+  private targetInfo(tg: Targetable, p: Ship): TargetInfo {
+    _w.copy(tg.pos).sub(p.pos);
+    const distance = _w.length();
+    const dir = this.tgtDir.copy(_w).divideScalar(Math.max(distance, 1e-3));
+    // Closing rate: relative velocity projected onto the line of sight (positive = range shrinking).
+    const closing = _v.copy(p.vel).sub(tg.vel).dot(dir);
+    dir.applyQuaternion(_inv.copy(p.quat).invert());
+    return {
+      name: t(targetName(tg)),
+      kind: targetKind(tg),
+      hull: hullFraction(tg),
+      shielded: tg instanceof Subsystem && tg.shielded,
+      distance,
+      speed: tg.vel.length(),
+      closing,
+      dir,
+    };
+  }
+
+  /** The hostile fighter sitting on the player's six (within 700 m, nose on us), if any. */
+  private findTail(p: Ship, world: World): Ship | null {
     const fwd = p.forward(_v);
     for (const s of world.ships) {
       if (!s.alive || s.team === p.team) continue;
@@ -739,9 +790,51 @@ export class Game {
       const d = _w.length();
       if (d > 700 || d < 1) continue;
       if (_w.dot(fwd) / d > -0.6) continue;
-      if (s.forward(new THREE.Vector3()).dot(_w.normalize().negate()) > 0.9) return true;
+      if (s.forward(new THREE.Vector3()).dot(_w.normalize().negate()) > 0.9) return s;
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * Wingman assist ("I'm on him, Luke!"): if a fighter stays on the player's tail for a few seconds, the
+   * nearest named wingman breaks off to clear it, then returns to what it was doing.
+   */
+  private updateWingmanAssist(ctx: Ctx, p: Ship, tail: Ship | null, dt: number): void {
+    this.tailSince = tail ? this.tailSince + dt : 0;
+    this.helpCooldown -= dt;
+    const h = this.helper;
+    if (h) {
+      const over = !h.chaser.alive || !h.ship.alive || ctx.world.time > h.until;
+      if (!over) return;
+      if (h.ship.alive) {
+        h.ship.brain = h.prevBrain;
+        h.ship.damageScale = h.prevScale;
+        if (!h.chaser.alive) this.comms.say(h.speaker, 'help.clear');
+      }
+      this.helper = null;
+      return;
+    }
+    if (!tail || tail.kinematic || this.tailSince < 4 || this.helpCooldown > 0) return;
+    let best: Ship | null = null;
+    for (const s of ctx.world.ships) {
+      if (!s.alive || s.isPlayer || s.team !== p.team || s.kinematic || !(s.brain instanceof DogfightBrain)) continue;
+      if (!s.nameKey || !(s.nameKey in HELPER_SPEAKER)) continue;
+      if (!best || s.pos.distanceToSquared(p.pos) < best.pos.distanceToSquared(p.pos)) best = s;
+    }
+    if (!best?.nameKey) return;
+    const speaker = HELPER_SPEAKER[best.nameKey];
+    if (!speaker) return;
+    // Bring a distant wingman in behind the attacker (out of the player's forward view).
+    if (best.pos.distanceTo(p.pos) > 1500) {
+      best.pos.copy(tail.pos).addScaledVector(tail.forward(), -450).add(new THREE.Vector3(0, 30, 0));
+      best.quat.copy(tail.quat);
+      best.vel.copy(tail.vel);
+    }
+    this.helper = { ship: best, chaser: tail, prevBrain: best.brain, prevScale: best.damageScale, until: ctx.world.time + 12, speaker };
+    best.brain = new DogfightBrain({ skill: 1, minAltitude: ctx.world.surface ? 60 : 0, forcedTarget: () => tail });
+    best.damageScale = 1;
+    this.helpCooldown = 22;
+    this.comms.say(speaker, 'help.onHim');
   }
 
   private updateFeedback(dt: number): void {
@@ -787,8 +880,10 @@ export class Game {
             this.repairChirp = 9;
           }
         }
-        this.audio.setEngine(clamp(p.speed / p.spec.maxSpeed, 0, 1), p.throttle > 0.97);
-        this.enemyOnTail = this.checkTail(p, ctx.world);
+        this.audio.setEngine(clamp(p.speed / p.spec.maxSpeed, 0, 1), p.maneuvering || p.throttle > 0.97);
+        const tail = this.findTail(p, ctx.world);
+        this.enemyOnTail = !!tail;
+        if (ctx.playerControl) this.updateWingmanAssist(ctx, p, tail, dt);
         const low = p.hull / p.spec.hull < 0.25;
         this.audio.alarm(low || this.enemyOnTail);
       } else {
@@ -823,7 +918,7 @@ export class Game {
         player: p,
         camera: cam,
         target: tg,
-        targetInfo: tg && p ? { name: t(targetName(tg)), hull: hullFraction(tg), shielded: tg instanceof Subsystem && tg.shielded, distance: tg.pos.distanceTo(p.pos) } : null,
+        targetInfo: tg && p ? this.targetInfo(tg, p) : null,
         objectives: ctx.objectives,
         markers: ctx.markers,
         timer: ctx.timer,

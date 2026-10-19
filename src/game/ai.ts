@@ -68,6 +68,8 @@ export class DogfightBrain {
   private mode: 'attack' | 'extend' | 'evade' = 'attack';
   private modeT = 0;
   private jink = new THREE.Vector3();
+  private tailT = 0;
+  private tailLimit = 6 + Math.random() * 4;
   constructor(public opts: DogfightOptions) {}
 
   private pickTarget(ship: Ship, world: World): Targetable | null {
@@ -127,7 +129,16 @@ export class DogfightBrain {
       // directly behind is the deadliest geometry, so tail shots get extra error (the player must get time to break).
       const tp = t as Ship; // isPlayer is only set on ships; other Targetables read undefined
       const onTail = tp.isPlayer === true && tp.forward(_l).dot(_r.copy(t.pos).sub(ship.pos).normalize()) > 0.7;
-      const err = dist * 0.035 * clamp(1.25 - this.opts.skill, 0.15, 1.2) * (onTail ? 1.8 : 1);
+      // A boosting / barrel-rolling target is much harder to track.
+      const err = dist * 0.035 * clamp(1.25 - this.opts.skill, 0.15, 1.2) * (onTail ? 1.8 : 1) * (tp.maneuvering === true ? 2.2 : 1);
+      // Nobody holds a six forever: after a while on the player's tail the TIE overshoots and extends away.
+      this.tailT = onTail ? this.tailT + dt : Math.max(0, this.tailT - dt);
+      if (this.tailT > this.tailLimit) {
+        this.tailT = 0;
+        this.tailLimit = 6 + Math.random() * 4;
+        this.mode = 'extend';
+        this.modeT = 2.5 + Math.random() * 1.5;
+      }
       const ph = ship.id * 1.7 + world.time * 0.9;
       _aim.x += Math.sin(ph) * err;
       _aim.y += Math.cos(ph * 1.3) * err;

@@ -26,8 +26,9 @@ All captured in-engine (real-time, procedural assets).
 ## Features
 
 - Full campaign plus free mission select, with cinematic briefing hologram and epilogue.
-- Arcade flight model with flight assists (auto-level, throttle presets), deflector shields, S-foils, targeting and a trench-run targeting computer.
-- Wingmen and enemy AI with radio chatter shown as subtitles, optionally spoken with the browser's built-in text-to-speech.
+- Arcade flight model with flight assists (auto-level, throttle presets), boost and evasive rolls, deflector shields, S-foils, targeting and a trench-run targeting computer.
+- Cockpit-style HUD: fore and aft sensor scopes, targeting display with target silhouette, range, speed, closing rate and direction.
+- Wingmen and enemy AI with radio chatter shown as subtitles, optionally spoken with the browser's built-in text-to-speech. Wingmen come to your aid when a TIE sits on your tail, and pursuers eventually overshoot.
 - Four difficulty levels with scaled aim assist.
 - Keyboard + mouse and gamepad support.
 - Bilingual **English / Italian**, with an i18n layer ready for more languages.
@@ -60,9 +61,11 @@ Aim assist (bolt magnetism, reticle friction, torpedo lock time) scales with dif
 |---|---|
 | Mouse | Virtual flight stick (pointer lock) |
 | Left click / Space | Fire lasers |
-| W / S (Shift / Ctrl) | Throttle up / down |
+| W / S (Ctrl) | Throttle up / down |
 | 1 – 4 | Throttle presets |
 | A / D or Q / E | Roll |
+| Shift (hold) | Boost |
+| Double-tap A / D or Q / E | Evasive barrel roll (most bolts miss) |
 | Arrow keys | Pitch / yaw |
 | Z | Auto-level (wings level, nose to horizon) |
 | X | S-foils open / closed |
