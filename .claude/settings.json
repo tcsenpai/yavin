@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/myc-followup-stop.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
