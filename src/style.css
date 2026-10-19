@@ -3,7 +3,8 @@
   --gold: #ffe14a;
   --ink: #f2e6c9;
   --bg: rgba(6, 8, 12, 0.78);
-  --font: 'Eurostile', 'Bank Gothic', 'Orbitron', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font: 'News Cycle', 'Helvetica Neue', Arial, sans-serif;
+  --display: 'Orbitron', 'Eurostile', 'Segoe UI', sans-serif;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: var(--ink); font-family: var(--font); }
@@ -15,7 +16,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 
 .title-screen { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px; }
 .title-screen .pre { letter-spacing: 0.5em; font-size: 13px; color: var(--amber); text-transform: uppercase; }
-.logo { margin: 6px 0 0; font-size: clamp(38px, 7vw, 86px); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+.logo { margin: 6px 0 0; font-size: clamp(28px, 5vw, 72px); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap;
   color: transparent; -webkit-text-stroke: 2px var(--gold); text-shadow: 0 0 30px rgba(255, 225, 74, 0.25); line-height: 1; }
 .subtitle { color: var(--ink); opacity: 0.8; letter-spacing: 0.2em; text-transform: uppercase; font-size: 14px; }
 .nav { display: flex; flex-direction: column; gap: 10px; margin: 26px 0 12px; min-width: 280px; }
@@ -87,3 +88,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .crawl-inner .crawl-title { text-align: center; font-size: 1.4em; margin-bottom: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; }
 @keyframes crawl { from { transform: translateX(-50%) rotateX(24deg) translateY(0); } to { transform: translateX(-50%) rotateX(24deg) translateY(-260vh); } }
 .crawl-screen .skip { position: absolute; bottom: 20px; right: 26px; font-size: 12px; opacity: 0.5; letter-spacing: 0.2em; }
+
+/* Typography: Orbitron (OFL) for capitalised display text, News Cycle (OFL, News Gothic revival) for reading text and the crawl. */
+.logo, .title-screen .pre, .subtitle, .btn, .chip, .panel h2, .panel .pre, .section, .rank-big, .best,
+.level .num, .level .name, .loading, .crawl-screen .skip, .field > span { font-family: var(--display); }
+.btn { font-weight: 600; font-size: 14px; }
+.crawl-screen .ago, .crawl-inner { font-family: var(--font); }

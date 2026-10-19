@@ -1,4 +1,4 @@
-// Laser bolts (instanced camera-facing beams, two colours) and proton torpedoes (billboard glow).
+// Laser bolts (instanced camera-facing beams, two colours) and proton torpedoes (glowing ball + ribbon trail).
 import * as THREE from 'three';
 import type { Targetable, Team } from './types';
 import type { World } from './world';
@@ -33,10 +33,34 @@ export interface Torpedo {
 }
 
 const MAX_BOLTS = 600;
+/** Ribbon history: up to this many samples, spanning TRAIL_TIME seconds. */
+const TRAIL_SAMPLES = 64;
+const TRAIL_TIME = 0.4;
 const _s = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _v = new THREE.Vector3();
 const _px = new THREE.Vector2();
+
+interface TorpTrail {
+  mesh: THREE.Mesh;
+  pos: THREE.BufferAttribute;
+  dir: THREE.BufferAttribute;
+  info: THREE.BufferAttribute;
+  /** Ring buffer of (x, y, z, time) samples. */
+  samples: Float32Array;
+  head: number;
+  count: number;
+  /** A launch flash is still owed at `origin` (emitted on the next update, which has the FX system). */
+  launch: boolean;
+  origin: THREE.Vector3;
+}
+
+/** Upload only the first `count` vertices of a dynamic attribute. */
+function markRange(attr: THREE.BufferAttribute, count: number): void {
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(0, count * attr.itemSize);
+  attr.needsUpdate = true;
+}
 
 // Bolt beam: the instance matrix carries tail (column 3), axis × length (column 2) and thickness
 // (|column 0|). The quad is expanded in view space around the projected axis with rounded caps, so
@@ -99,7 +123,9 @@ const BOLT_FRAG = /* glsl */ `
   }
 `;
 
-// Torpedo: white-hot core, flickering orange glow, faint lens ring and slowly turning star spikes.
+// Proton torpedo as in the 1977 film: one bright ball, white-hot centre falling off through orange to deep
+// red, softly pulsing, smooth halo. Only the small centre exceeds the bloom threshold. Kept at least a few
+// pixels wide so it reads at long range.
 const TORP_VERT = /* glsl */ `
   #include <common>
   #include <logdepthbuf_pars_vertex>
@@ -109,11 +135,11 @@ const TORP_VERT = /* glsl */ `
   varying float vPhase;
   void main() {
     vec4 c = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-    float size = 4.6;
-    float minS = 7.0 * max(length(c.xyz), 0.1) / uPx;
+    float size = 3.2;
+    float minS = 12.0 * max(length(c.xyz), 0.1) / uPx;
     vI = 1.0;
     if (size < minS) {
-      vI = size / minS;
+      vI = sqrt(size / minS);
       size = minS;
     }
     vPhase = fract(dot(modelMatrix[3].xyz, vec3(0.013, 0.007, 0.011)));
@@ -132,20 +158,65 @@ const TORP_FRAG = /* glsl */ `
   varying float vPhase;
   void main() {
     #include <logdepthbuf_fragment>
-    float r = length(vUv);
-    if (r > 1.0) discard;
-    float flick = 0.82 + 0.18 * sin(uTime * 53.0 + vPhase * 40.0) * sin(uTime * 31.0 + vPhase * 17.0);
-    float core = exp(-r * r * 110.0);
-    float inner = exp(-r * r * 16.0);
-    float halo = exp(-r * 4.2);
-    float ring = exp(-pow((r - 0.58) / 0.045, 2.0)) * 0.12;
-    float ang = atan(vUv.y, vUv.x) + uTime * 1.3 + vPhase * 6.28;
-    float spikes = pow(abs(cos(ang * 2.0)), 60.0) * exp(-r * 3.2) * 0.9;
-    vec3 col = vec3(12.0, 10.5, 9.0) * core
-      + vec3(7.0, 2.6, 0.7) * inner * flick
-      + vec3(2.0, 0.5, 0.1) * halo * flick
-      + vec3(1.0, 0.65, 0.35) * (ring + spikes);
-    gl_FragColor = vec4(col * vI * (1.0 - smoothstep(0.8, 1.0, r)), 1.0);
+    float r2 = dot(vUv, vUv);
+    if (r2 > 1.0) discard;
+    float pulse = 0.9 + 0.1 * sin(uTime * 13.0 + vPhase * 40.0);
+    float core = exp(-r2 * 55.0);
+    float ball = exp(-r2 * 9.0);
+    float halo = exp(-sqrt(r2) * 3.6) * (1.0 - r2);
+    vec3 col = vec3(2.6, 2.1, 1.6) * core
+      + vec3(2.0, 0.62, 0.14) * ball * pulse
+      + vec3(0.5, 0.07, 0.02) * halo * (0.85 + 0.15 * pulse);
+    gl_FragColor = vec4(col * vI, 1.0);
+  }
+`;
+
+// Torpedo wake: camera-facing ribbon through the last TRAIL_TIME s of positions, tapering and cooling
+// orange → red → transparent with age.
+const TRAIL_VERT = /* glsl */ `
+  #include <common>
+  #include <logdepthbuf_pars_vertex>
+  uniform float uPx;
+  attribute vec3 aDir;
+  attribute vec2 aInfo; // side (-1 / +1), age (s)
+  varying float vT;
+  varying float vX;
+  varying float vI;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vec3 d = (modelViewMatrix * vec4(aDir, 0.0)).xyz;
+    vec3 side = cross(d, normalize(mv.xyz));
+    float l = length(side);
+    side = l > 1e-6 ? side / l : vec3(1.0, 0.0, 0.0);
+    float t = clamp(aInfo.y / ${TRAIL_TIME.toFixed(3)}, 0.0, 1.0);
+    float w = mix(0.75, 0.15, t);
+    float minW = 1.5 * max(length(mv.xyz), 0.1) / uPx;
+    vI = 1.0;
+    if (w < minW) {
+      vI = w / minW;
+      w = minW;
+    }
+    mv.xyz += side * (aInfo.x * w);
+    vT = t;
+    vX = aInfo.x;
+    gl_Position = projectionMatrix * mv;
+    #include <logdepthbuf_vertex>
+  }
+`;
+const TRAIL_FRAG = /* glsl */ `
+  #include <common>
+  #include <logdepthbuf_pars_fragment>
+  varying float vT;
+  varying float vX;
+  varying float vI;
+  void main() {
+    #include <logdepthbuf_fragment>
+    float x2 = vX * vX;
+    float body = exp(-x2 * 3.0) * (1.0 - x2);
+    float core = exp(-x2 * 12.0);
+    float k = max(1.0 - vT, 0.0); // interpolation can overshoot 1 slightly: pow(<0) is NaN and poisons bloom
+    vec3 col = mix(vec3(1.25, 0.36, 0.07), vec3(0.45, 0.05, 0.015), vT) * body + vec3(0.9, 0.42, 0.14) * core * k * k;
+    gl_FragColor = vec4(col * pow(k, 2.4) * vI, 1.0);
   }
 `;
 
@@ -154,6 +225,8 @@ export class Weapons {
   private bolts: Bolt[] = [];
   private meshes: THREE.InstancedMesh[];
   readonly torpedoes: Torpedo[] = [];
+  /** Wake ribbon for each torpedo (same index). */
+  private trails: TorpTrail[] = [];
   private time = 0;
   private pxUniform = { value: 600 };
   private timeUniform = { value: 0 };
@@ -167,12 +240,27 @@ export class Weapons {
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
   });
-  /** Keeps the pixel-size uniform in sync with the render target and camera. */
+  private trailMat = new THREE.ShaderMaterial({
+    vertexShader: TRAIL_VERT,
+    fragmentShader: TRAIL_FRAG,
+    uniforms: { uPx: this.pxUniform },
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+  /** Quad strip indices shared by every trail ribbon. */
+  private trailIndex: THREE.BufferAttribute;
+  /** Keeps the pixel-size uniform (CSS pixels per metre at 1 m) in sync with the canvas and camera, so minimum
+   *  on-screen sizes look the same on standard and high-DPI displays. */
   private syncPx = (renderer: THREE.WebGLRenderer, _scene: THREE.Scene, camera: THREE.Camera): void => {
-    this.pxUniform.value = 0.5 * renderer.getDrawingBufferSize(_px).y * camera.projectionMatrix.elements[5];
+    this.pxUniform.value = (0.5 * renderer.getDrawingBufferSize(_px).y * camera.projectionMatrix.elements[5]) / renderer.getPixelRatio();
   };
 
   constructor() {
+    const idx = new Uint16Array((TRAIL_SAMPLES - 1) * 6);
+    for (let i = 0; i < TRAIL_SAMPLES - 1; i++) idx.set([2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 2, 2 * i + 1, 2 * i + 3], i * 6);
+    this.trailIndex = new THREE.BufferAttribute(idx, 1);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, -1, 1, 0, 1, 1, 0], 3));
     geo.setIndex([0, 1, 2, 2, 1, 3]);
@@ -233,16 +321,23 @@ export class Weapons {
   }
 
   fireTorpedo(owner: Targetable, origin: THREE.Vector3, vel: THREE.Vector3, target: Targetable | null, point: THREE.Vector3 | null): Torpedo {
-    let t = this.torpedoes.find((x) => !x.active);
-    if (!t) {
+    let i = this.torpedoes.findIndex((x) => !x.active);
+    if (i < 0) {
       const mesh = new THREE.Mesh(this.torpGeo, this.torpMat);
       mesh.frustumCulled = false;
       mesh.renderOrder = 6;
       mesh.onBeforeRender = this.syncPx;
-      t = { active: false, pos: mesh.position, vel: new THREE.Vector3(), target: null, point: null, owner, life: 0, mesh, onArrive: null, guidance: 2.5 };
-      this.torpedoes.push(t);
+      i = this.torpedoes.length;
+      this.torpedoes.push({ active: false, pos: mesh.position, vel: new THREE.Vector3(), target: null, point: null, owner, life: 0, mesh, onArrive: null, guidance: 2.5 });
+      this.trails.push(this.createTrail());
       this.group.add(mesh);
     }
+    const t = this.torpedoes[i];
+    const trail = this.trails[i];
+    trail.count = 0;
+    trail.launch = true;
+    trail.origin.copy(origin);
+    trail.mesh.visible = false;
     t.active = true;
     t.mesh.visible = true;
     t.pos.copy(origin);
@@ -259,10 +354,90 @@ export class Weapons {
   /** Remove every bolt (level resets / cinematic cuts). */
   clear(): void {
     for (const b of this.bolts) b.active = false;
-    for (const t of this.torpedoes) {
-      t.active = false;
-      t.mesh.visible = false;
+    for (let i = 0; i < this.torpedoes.length; i++) {
+      this.torpedoes[i].active = false;
+      this.torpedoes[i].mesh.visible = false;
+      this.trails[i].count = 0;
+      this.trails[i].launch = false;
+      this.trails[i].mesh.visible = false;
     }
+  }
+
+  private createTrail(): TorpTrail {
+    const n = TRAIL_SAMPLES * 2;
+    const geo = new THREE.BufferGeometry();
+    const pos = new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const dir = new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const info = new THREE.BufferAttribute(new Float32Array(n * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', pos);
+    geo.setAttribute('aDir', dir);
+    geo.setAttribute('aInfo', info);
+    geo.setIndex(this.trailIndex);
+    geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, this.trailMat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 5;
+    mesh.visible = false;
+    mesh.onBeforeRender = this.syncPx;
+    this.group.add(mesh);
+    return { mesh, pos, dir, info, samples: new Float32Array(TRAIL_SAMPLES * 4), head: 0, count: 0, launch: false, origin: new THREE.Vector3() };
+  }
+
+  /** Record the torpedo's position and rebuild its wake ribbon from the samples younger than TRAIL_TIME. */
+  private updateTrail(trail: TorpTrail, t: Torpedo, world: World): void {
+    if (trail.launch) {
+      trail.launch = false;
+      world.fx.torpedoLaunch(trail.origin, t.owner.vel);
+    }
+    const s = trail.samples;
+    if (t.active) {
+      const o = trail.head * 4;
+      s[o] = t.pos.x;
+      s[o + 1] = t.pos.y;
+      s[o + 2] = t.pos.z;
+      s[o + 3] = this.time;
+      trail.head = (trail.head + 1) % TRAIL_SAMPLES;
+      if (trail.count < TRAIL_SAMPLES) trail.count++;
+    }
+    if (trail.count === 0) return;
+    const p = trail.pos.array as Float32Array;
+    const info = trail.info.array as Float32Array;
+    let n = 0;
+    for (let k = 0; k < trail.count; k++) {
+      const o = ((trail.head - 1 - k + TRAIL_SAMPLES) % TRAIL_SAMPLES) * 4;
+      const age = this.time - s[o + 3];
+      if (age > TRAIL_TIME) break;
+      const v = n * 6;
+      p[v] = p[v + 3] = s[o];
+      p[v + 1] = p[v + 4] = s[o + 1];
+      p[v + 2] = p[v + 5] = s[o + 2];
+      const w = n * 4;
+      info[w] = -1;
+      info[w + 1] = age;
+      info[w + 2] = 1;
+      info[w + 3] = age;
+      n++;
+    }
+    if (n < 2) {
+      trail.mesh.visible = false;
+      if (n === 0) trail.count = 0;
+      return;
+    }
+    // Tangents by central differences (one-sided at the ends).
+    const d = trail.dir.array as Float32Array;
+    for (let j = 0; j < n; j++) {
+      const a = Math.max(j - 1, 0) * 6;
+      const b = Math.min(j + 1, n - 1) * 6;
+      const v = j * 6;
+      d[v] = d[v + 3] = p[a] - p[b];
+      d[v + 1] = d[v + 4] = p[a + 1] - p[b + 1];
+      d[v + 2] = d[v + 5] = p[a + 2] - p[b + 2];
+    }
+    markRange(trail.pos, n * 2);
+    markRange(trail.dir, n * 2);
+    markRange(trail.info, n * 2);
+    trail.mesh.geometry.setDrawRange(0, (n - 1) * 6);
+    trail.mesh.visible = true;
   }
 
   update(world: World, dt: number): void {
@@ -367,5 +542,6 @@ export class Weapons {
         t.mesh.visible = false;
       }
     }
+    for (let i = 0; i < this.torpedoes.length; i++) this.updateTrail(this.trails[i], this.torpedoes[i], world);
   }
 }

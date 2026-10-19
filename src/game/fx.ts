@@ -756,23 +756,22 @@ export class FX {
     }
   }
 
-  /** Proton torpedo wake: twinkling sparkles and a short glow, spread along this frame's path. */
+  /** Proton torpedo wake: only an occasional, very faint thin smoke wisp (the glow ribbon lives in Weapons). */
   torpedoTrail(pos: THREE.Vector3, vel: THREE.Vector3, dt: number): void {
     const r = this.rng;
-    for (let i = 0; i < 4; i++) {
-      _p.copy(pos).addScaledVector(vel, -dt * r.float());
-      this.randDir(_vel, r.range(4, 18)).addScaledVector(vel, 0.05);
-      this.set(SPARK, r.range(0.4, 0.9), r.range(0.25, 0.45), 0.06, 1.6, r.range(1.1, 1.5));
-      this.emitFire(_p, _vel);
-    }
-    _p.copy(pos).addScaledVector(vel, -dt * 0.5);
-    this.set(FLASH, 0.3, 2.0, 0.5, 0, 1.4);
-    this.emitFire(_p, _zero);
-    if (r.float() < 0.3) {
-      this.set(SMOKE, 0.9, 0.5, 2, 1, 0);
-      this.smokeLook(0.3, 0.25);
-      this.emitSmoke(_p, _zero);
-    }
+    if (r.float() > dt * 15) return;
+    _p.copy(pos).addScaledVector(vel, -dt * r.float());
+    this.randDir(_vel, 0.6);
+    this.set(SMOKE, r.range(0.7, 1.1), 0.35, r.range(1.1, 1.6), 1, 0);
+    this.smokeLook(0.35, 0.14);
+    this.emitSmoke(_p, _vel);
+  }
+
+  /** Brief orange launch flash at a torpedo tube, carried along with the launching ship. */
+  torpedoLaunch(pos: THREE.Vector3, vel: THREE.Vector3): void {
+    this.set(FLASH, 0.1, 1.1, 0.5, 0, 1.6);
+    this.emitFire(pos, vel);
+    this.flash(pos, 2.5, 0.1, 30, true);
   }
 
   /** Engine/muzzle flash sprite. */

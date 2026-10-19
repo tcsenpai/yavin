@@ -4,7 +4,7 @@ import { AudioSystem, type MusicMood } from '../audio/audio';
 import { Engine } from '../core/engine';
 import { Input, type FlightInput } from '../core/input';
 import { clamp, damp } from '../core/rng';
-import { AIM_ASSIST, DIFFICULTY_SCALE, loadSettings, saveSettings, type Settings } from '../core/settings';
+import { AIM_ASSIST, DIFFICULTY_SCALE, HULL_REGEN, loadSettings, saveSettings, type Settings } from '../core/settings';
 import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
 import { buildEnvironment } from '../levels/environment';
@@ -710,8 +710,12 @@ export class Game {
 
     if (p && this.level.kind !== 'cinematic') {
       if (p.alive) {
-        // R2-D2 patches the hull between hits.
-        if (ctx.r2Alive && p.sinceHit > 4 && p.hull < p.spec.hull * 0.8) {
+        const regen = HULL_REGEN[this.settings.difficulty];
+        if (regen && p.sinceHit >= regen.delay && p.hull < p.spec.hull) {
+          // Difficulty-based self-repair (Cadet: always; Pilot: after a few seconds out of fire).
+          p.hull = Math.min(p.spec.hull, p.hull + regen.rate * dt);
+        } else if (ctx.r2Alive && p.sinceHit > 4 && p.hull < p.spec.hull * 0.8) {
+          // R2-D2 patches the hull between hits.
           p.hull += 1.4 * dt;
           this.repairChirp -= dt;
           if (this.repairChirp <= 0) {

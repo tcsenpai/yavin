@@ -21,7 +21,18 @@ export const DIFFICULTIES = ['cadet', 'pilot', 'ace', 'jedi'] as const;
 export type Difficulty = (typeof DIFFICULTIES)[number];
 
 /** Global challenge multiplier: enemy accuracy/aggression, fire rates, wave sizes, and (^1.5) damage taken. */
-export const DIFFICULTY_SCALE: Record<Difficulty, number> = { cadet: 0.65, pilot: 1, ace: 1.25, jedi: 1.5 };
+export const DIFFICULTY_SCALE: Record<Difficulty, number> = { cadet: 0.5, pilot: 1, ace: 1.25, jedi: 1.5 };
+
+/**
+ * Automatic hull regeneration: Cadet regenerates continuously, Pilot only after `delay` s without damage.
+ * Ace/Jedi rely on R2-D2's slow field repairs only.
+ */
+export const HULL_REGEN: Record<Difficulty, { rate: number; delay: number } | null> = {
+  cadet: { rate: 4, delay: 0 },
+  pilot: { rate: 3, delay: 4 },
+  ace: null,
+  jedi: null,
+};
 
 /**
  * Aim assist per difficulty. Only engages when the reticle is already near a target's lead point:

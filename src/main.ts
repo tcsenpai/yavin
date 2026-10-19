@@ -1,3 +1,7 @@
+import '@fontsource/orbitron/600.css';
+import '@fontsource/orbitron/800.css';
+import '@fontsource/news-cycle/400.css';
+import '@fontsource/news-cycle/700.css';
 import './style.css';
 import { Game } from './game/game';
 import { briefing } from './levels/briefing';

@@ -70,7 +70,9 @@ const AMBER = '#ffb347';
 const RED = '#ff4a3a';
 const GREEN = '#7dff7a';
 const CYAN = '#8fd3ff';
-const FONT = '"Eurostile", "Bank Gothic", "Orbitron", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+const FONT = '"Orbitron", "Eurostile", "Segoe UI", sans-serif';
+/** Reading text (subtitles, objectives, hints): News Cycle reads better than the wide display face. */
+const BODY = '"News Cycle", "Helvetica Neue", Arial, sans-serif';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 
 const _p = new THREE.Vector3();
@@ -178,7 +180,7 @@ export class Hud {
     this.text(String(f.score).padStart(6, '0'), x, 52, 22, '#ffe14a', 'right', MONO, '700');
     f.toasts.forEach((tst, i) => {
       this.ctx.globalAlpha = Math.min(1, tst.life * 2);
-      this.text(tst.text, x, 80 + i * 20, 13, tst.color, 'right', FONT, '600');
+      this.text(tst.text, x, 80 + i * 20, 14, tst.color, 'right', BODY, '700');
     });
     this.ctx.globalAlpha = 1;
   }
@@ -478,10 +480,10 @@ export class Hud {
     this.text(t('hud.speed'), tx, y + 58, 11, AMBER);
     this.bar(tx, y + 64, 108, 9, p.throttle, '#ffd68a');
     this.text(`${Math.round(p.speed * 3.6)} km/h`, tx + 108, y + 58, 11, AMBER, 'right', MONO);
-    this.text(`${t('hud.torpedoes')}: ${s.torpedoes}`, tx, y + 92, 12, AMBER);
-    this.text(`${t('hud.sfoils')}: ${t(p.sfoils > 0.97 ? 'hud.sfoils.open' : p.sfoils < 0.03 ? 'hud.sfoils.closed' : 'hud.sfoils.moving')}`, tx, y + 110, 12, p.sfoils > 0.97 ? AMBER : CYAN);
-    this.text(`${t('hud.deflectors')}: ${t(`hud.defl.${p.deflectors}` as StringKey)}`, tx, y + 128, 12, CYAN);
-    if (s.computer || s.computerOff) this.text(`${t('hud.computer')}: ${t(s.computerOff ? 'hud.off' : 'hud.on')}`, tx, y + 146, 12, s.computerOff ? CYAN : AMBER);
+    this.text(`${t('hud.torpedoes')}: ${s.torpedoes}`, tx, y + 92, 14, AMBER, 'left', BODY, '700');
+    this.text(`${t('hud.sfoils')}: ${t(p.sfoils > 0.97 ? 'hud.sfoils.open' : p.sfoils < 0.03 ? 'hud.sfoils.closed' : 'hud.sfoils.moving')}`, tx, y + 110, 14, p.sfoils > 0.97 ? AMBER : CYAN, 'left', BODY, '700');
+    this.text(`${t('hud.deflectors')}: ${t(`hud.defl.${p.deflectors}` as StringKey)}`, tx, y + 128, 14, CYAN, 'left', BODY, '700');
+    if (s.computer || s.computerOff) this.text(`${t('hud.computer')}: ${t(s.computerOff ? 'hud.off' : 'hud.on')}`, tx, y + 146, 14, s.computerOff ? CYAN : AMBER, 'left', BODY, '700');
     this.text('RED 5 · T-65', x + 14, y + 160, 10, 'rgba(255,179,71,0.6)', 'left', MONO);
   }
 
@@ -554,7 +556,7 @@ export class Hud {
       y += 20;
       const col = o.failed ? RED : o.done ? '#8a8a8a' : '#f2e6c9';
       const mark = o.failed ? '✕' : o.done ? '✓' : '▸';
-      this.text(`${mark} ${t(o.key, o.params)}`, x, y, 13, col, 'left', FONT, '500');
+      this.text(`${mark} ${t(o.key, o.params)}`, x, y, 15, col, 'left', BODY, '400');
     }
   }
 
@@ -577,7 +579,7 @@ export class Hud {
     const text = t(line.key, line.params);
     const name = t(SPEAKER_NAME[line.speaker]);
     const maxW = Math.max(420, Math.min(700, this.w - 600));
-    c.font = `500 17px ${FONT}`;
+    c.font = `400 19px ${BODY}`;
     const lines = wrap(c, text, maxW - 40);
     const boxH = 40 + lines.length * 23;
     const x = this.w / 2 - maxW / 2;
@@ -599,13 +601,13 @@ export class Hud {
     }
     c.stroke();
     this.text(name.toUpperCase(), x + 18, y + 24, 13, SPEAKER_COLOR[line.speaker], 'left', FONT, '700');
-    lines.forEach((ln, i) => this.text(ln, x + 18, y + 50 + i * 23, 17, line.ghost ? '#cfe8ff' : '#f4efe4', 'left', FONT, line.ghost ? '400' : '500'));
+    lines.forEach((ln, i) => this.text(ln, x + 18, y + 50 + i * 23, 19, line.ghost ? '#cfe8ff' : '#f4efe4', 'left', BODY, '400'));
     c.globalAlpha = 1;
   }
 
   private drawHint(hint: string): void {
     const c = this.ctx;
-    c.font = `600 15px ${FONT}`;
+    c.font = `700 16px ${BODY}`;
     const w = c.measureText(hint).width + 36;
     const x = this.w / 2 - w / 2;
     const y = this.h * 0.3;
@@ -613,7 +615,7 @@ export class Hud {
     c.fillRect(x, y - 22, w, 34);
     c.strokeStyle = 'rgba(255,225,74,0.6)';
     c.strokeRect(x + 0.5, y - 21.5, w, 34);
-    this.text(hint, this.w / 2, y, 15, '#ffe14a', 'center');
+    this.text(hint, this.w / 2, y, 16, '#ffe14a', 'center', BODY, '700');
   }
 
   private drawBanner(b: { title: string; sub: string; alpha: number }): void {
@@ -622,7 +624,7 @@ export class Hud {
     c.fillStyle = 'rgba(0,0,0,0.45)';
     c.fillRect(0, this.h * 0.36, this.w, 130);
     this.text(b.title.toUpperCase(), this.w / 2, this.h * 0.36 + 62, 40, '#ffe14a', 'center', FONT, '800');
-    this.text(b.sub, this.w / 2, this.h * 0.36 + 100, 17, '#f2e6c9', 'center', FONT, '500');
+    this.text(b.sub, this.w / 2, this.h * 0.36 + 100, 18, '#f2e6c9', 'center', BODY, '400');
     c.globalAlpha = 1;
   }
 
