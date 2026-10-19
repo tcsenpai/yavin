@@ -447,7 +447,7 @@ export class Hud {
     c.stroke();
   }
 
-  private edgeArrow(x: number, y: number, behind: boolean, color: string, label?: string): void {
+  private edgeArrow(x: number, y: number, behind: boolean, color: string, label?: string, size = 1): void {
     const c = this.ctx;
     let dx = x - this.w / 2;
     let dy = y - this.h / 2;
@@ -464,6 +464,7 @@ export class Hud {
     c.save();
     c.translate(px, py);
     c.rotate(a);
+    c.scale(size, size);
     c.fillStyle = color;
     c.beginPath();
     c.moveTo(14, 0);
@@ -487,10 +488,18 @@ export class Hud {
       const hostile = tg.team === 'empire';
       const r = clamp((tg.radius * 900) / Math.max(d, 1), 7, 60);
       const selected = tg === s.target;
-      this.bracket(pr.x, pr.y, r, hostile ? (selected ? RED : 'rgba(255,74,58,0.55)') : 'rgba(255,200,120,0.4)', selected ? 2.2 : 1.2);
+      // Friend / foe must read instantly against the Death Star: solid red for hostiles, green for allies.
+      this.bracket(pr.x, pr.y, r, hostile ? (selected ? RED : 'rgba(255,74,58,0.85)') : 'rgba(125,255,122,0.75)', selected ? 2.2 : 1.5);
       if (selected) {
         this.text(`${Math.round(d)} m`, pr.x + r + 6, pr.y - r + 10, 11, RED, 'left', MONO);
       }
+    }
+    // Nearby hostile fighters off screen: small red arrows at the screen edge so you always know where they are.
+    for (const sh of s.world.ships) {
+      if (!sh.alive || sh.team !== 'empire' || sh === s.target || sh.pos.distanceTo(player.pos) > 1500) continue;
+      const pr = this.project(cam, sh.pos);
+      if (!pr.behind && pr.x > 0 && pr.y > 0 && pr.x < this.w && pr.y < this.h) continue;
+      this.edgeArrow(pr.x, pr.y, pr.behind, 'rgba(255,74,58,0.7)', undefined, 0.6);
     }
     const labels: { x: number; y: number }[] = [];
     for (const m of s.markers) {

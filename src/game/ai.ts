@@ -115,10 +115,6 @@ export class DogfightBrain {
     } else if (this.mode === 'extend' || !t) {
       ship.forward(dir);
       dir.y += 0.15;
-      if (this.opts.leash) {
-        _l.copy(this.opts.leash.center).sub(ship.pos);
-        if (_l.length() > this.opts.leash.radius * 0.6) dir.addScaledVector(_l.normalize(), 1.2);
-      }
       dir.normalize();
       ship.throttle = 1;
     } else {
@@ -158,9 +154,13 @@ export class DogfightBrain {
       }
     }
     if (this.opts.leash) {
+      // Keep the fight compact and in view: the pull starts inside the radius and ramps up hard past it
+      // (Cadet fights are 25 % tighter). A fighter extending away turns back as soon as it reaches the edge.
+      const radius = this.opts.leash.radius * clamp(0.5 + 0.5 * world.difficulty, 0.75, 1);
       _l.copy(this.opts.leash.center).sub(ship.pos);
-      const over = _l.length() - this.opts.leash.radius;
-      if (over > 0) dir.addScaledVector(_l.normalize(), clamp(over / 400, 0.2, 2)).normalize();
+      const over = _l.length() - radius;
+      if (over > -0.15 * radius) dir.addScaledVector(_l.normalize(), clamp((over + 0.15 * radius) / 300, 0.15, 3)).normalize();
+      if (over > 0 && this.mode === 'extend') this.mode = 'attack';
     }
     avoidGround(ship, world, dir, this.opts.minAltitude);
     steerToward(ship, dir);

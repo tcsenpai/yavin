@@ -106,9 +106,13 @@ export class Ship implements Targetable {
   constructor(
     readonly kind: ShipKind,
     readonly nameKey: StringKey | null,
-    opts: { stripeColor?: number } = {},
+    opts: { stripeColor?: number; agility?: { speed: number; turn: number } } = {},
   ) {
-    this.spec = SPECS[kind];
+    const base = SPECS[kind];
+    const ag = opts.agility;
+    this.spec = ag
+      ? { ...base, maxSpeed: base.maxSpeed * ag.speed, accel: base.accel * ag.speed, pitchRate: base.pitchRate * ag.turn, yawRate: base.yawRate * ag.turn, rollRate: base.rollRate * ag.turn }
+      : base;
     this.team = this.spec.team;
     switch (kind) {
       case 'xwing':
