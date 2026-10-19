@@ -120,10 +120,12 @@ export const mission1: LevelDef = {
     });
 
     // Two Imperial-class Star Destroyers steam in from the station to screen the approach.
-    const isdPos = [new THREE.Vector3(-1500, 260, -9500), new THREE.Vector3(1700, -340, -11000)];
+    // Shown ~1.75× canonical size: at combat ranges the true 1.6 km reads too small against the Death Star.
+    const ISD_SCALE = 1.75;
+    const isdPos = [new THREE.Vector3(-2300, 300, -10500), new THREE.Vector3(2500, -420, -12500)];
     const caps = isdPos.map((p, i) => {
       const aim = new THREE.Vector3(i ? -300 : 300, p.y, 1500);
-      const c = ctx.world.addCapital(new CapitalShip(i + 1, p, lookQuat(p, aim), 45, ctx.difficulty, i));
+      const c = ctx.world.addCapital(new CapitalShip(i + 1, p, lookQuat(p, aim), 45, ctx.difficulty, ISD_SCALE));
       c.hangarInterval = i ? 34 : 28;
       c.active = false;
       return c;
@@ -176,7 +178,7 @@ export const mission1: LevelDef = {
     let farTime = 0;
     let tieRefill = 20;
     const rng = new Rng(9);
-    const leash = { center: battleCentre, radius: 4500 };
+    const leash = { center: battleCentre, radius: 5500 };
 
     ctx.onUpdate = (dt) => {
       dist = Math.max(2500, dist - closing * dt);
@@ -196,7 +198,7 @@ export const mission1: LevelDef = {
         return br ? [{ pos: br.pos, key: 'ls.marker.bridge' as StringKey }] : [];
       });
       // Capital ships slow to a standstill once they are in position.
-      for (const c of caps) if (!c.disabled && c.root.position.z > -6500) c.vel.multiplyScalar(Math.exp(-0.4 * dt));
+      for (const c of caps) if (!c.disabled && c.root.position.z > -8000) c.vel.multiplyScalar(Math.exp(-0.4 * dt));
       tieRefill -= dt;
       const alive = tieList.filter((t) => t.alive).length;
       if (tieRefill <= 0 && alive < 3 + Math.round(ctx.difficulty) && ties < tieGoal) {

@@ -34,7 +34,7 @@ export class Subsystem implements Targetable {
     return this.part.kind;
   }
   get radius(): number {
-    return this.part.radius;
+    return this.part.radius * this.capital.scale;
   }
   get vel(): THREE.Vector3 {
     return this.capital.vel;
@@ -71,10 +71,12 @@ export class CapitalShip {
   private burnT = 0;
   private spin = new THREE.Vector3();
 
-  constructor(seed: number, pos: THREE.Vector3, heading: THREE.Quaternion, speed: number, readonly difficulty: number, readonly nameIndex: number) {
+  /** `scale` enlarges the whole ship (model, subsystems, colliders) beyond its canonical 1600 m for drama. */
+  constructor(seed: number, pos: THREE.Vector3, heading: THREE.Quaternion, speed: number, readonly difficulty: number, readonly scale = 1) {
     this.model = createStarDestroyer(seed);
     this.model.root.position.copy(pos);
     this.model.root.quaternion.copy(heading);
+    this.model.root.scale.setScalar(scale);
     this.vel.set(0, 0, -speed).applyQuaternion(heading);
     this.subsystems = this.model.subsystems.map((p) => new Subsystem(this, p, difficulty));
     this.model.setThrottle(0.6);
@@ -96,7 +98,7 @@ export class CapitalShip {
     _a.copy(p).applyMatrix4(_inv);
     let best = 0;
     for (const c of this.model.colliders) {
-      _box.copy(c).expandByScalar(margin);
+      _box.copy(c).expandByScalar(margin / this.scale);
       if (!_box.containsPoint(_a)) continue;
       // Smallest-axis push out.
       const dx0 = _a.x - _box.min.x;
@@ -116,7 +118,7 @@ export class CapitalShip {
       else _b.set(0, 0, 1);
       outNormal.copy(_b).transformDirection(this.model.root.matrixWorld);
     }
-    return best;
+    return best * this.scale;
   }
 
   destroySubsystem(s: Subsystem, world: World, killer: Targetable | null): void {
@@ -203,7 +205,7 @@ export class CapitalShip {
         const down = new THREE.Vector3(0, -1, 0).transformDirection(root.matrixWorld);
         for (let i = 0; i < 3; i++) {
           const tie = new Ship('tie', null);
-          tie.pos.copy(hangar.pos).addScaledVector(down, 90 + i * 16);
+          tie.pos.copy(hangar.pos).addScaledVector(down, (90 + i * 16) * this.scale);
           tie.quat.copy(root.quaternion);
           tie.vel.copy(this.vel);
           tie.throttle = 1;

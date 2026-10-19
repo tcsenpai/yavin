@@ -53,6 +53,7 @@ export const it: Dictionary = {
   'set.diff.jedi': 'Jedi',
   'set.sensitivity': 'Sensibilità del mouse',
   'set.invert': 'Inverti beccheggio',
+  'set.aimAssist': 'Assistenza alla mira (intensità in base alla difficoltà)',
   'set.master': 'Volume generale',
   'set.music': 'Volume musica',
   'set.voices': 'Voci sintetizzate (TTS del browser)',

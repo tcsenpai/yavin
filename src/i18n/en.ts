@@ -53,6 +53,7 @@ export const en = {
   'set.diff.jedi': 'Jedi',
   'set.sensitivity': 'Mouse sensitivity',
   'set.invert': 'Invert pitch',
+  'set.aimAssist': 'Aim assist (strength follows difficulty)',
   'set.master': 'Master volume',
   'set.music': 'Music volume',
   'set.voices': 'Synthesised voices (browser TTS)',

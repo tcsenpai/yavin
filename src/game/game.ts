@@ -4,7 +4,7 @@ import { AudioSystem, type MusicMood } from '../audio/audio';
 import { Engine } from '../core/engine';
 import { Input, type FlightInput } from '../core/input';
 import { clamp, damp } from '../core/rng';
-import { DIFFICULTY_SCALE, loadSettings, saveSettings, type Settings } from '../core/settings';
+import { AIM_ASSIST, DIFFICULTY_SCALE, loadSettings, saveSettings, type Settings } from '../core/settings';
 import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
 import { buildEnvironment } from '../levels/environment';
@@ -22,7 +22,6 @@ import { World } from './world';
 type State = 'menu' | 'card' | 'playing' | 'paused' | 'result';
 
 const TORPEDOES = 6; // T-65: two launchers, three proton torpedoes each
-const LOCK_TIME = 1.1;
 const CONVERGENCE = 450;
 const SKIP_HOLD = 1.0; // seconds to hold to skip a cinematic
 
@@ -167,6 +166,9 @@ export class Game {
   // Player-side state
   private target: Targetable | null = null;
   private lockT = 0;
+  private lockTime = 1;
+  private assisted = false;
+  private manualTargetAt = -99;
   private cockpit = false;
   private hudHidden = false;
   private lookBack = false;
@@ -338,6 +340,7 @@ export class Game {
       this.deadTime = 0;
       this.lockT = 0;
       this.skipT = 0;
+      this.manualTargetAt = -99;
       if (ctx.player) {
         this.camQuat.copy(ctx.player.quat);
         this.camPos.copy(ctx.player.pos);
@@ -541,26 +544,59 @@ export class Game {
       const pick = att ?? tail ?? null;
       if (pick) {
         this.target = pick;
+        this.manualTargetAt = ctx.world.time;
         this.audio.ui('select');
       }
     }
     const cycle = this.input.consume('target');
+    if (cycle) this.manualTargetAt = ctx.world.time;
     if (cycle || !this.target?.alive) this.pickTarget(p, ctx.world, cycle);
 
-    // Aim: cannons converge ahead; gentle assist bends the bolts onto the lead point when close to it.
+    // Aim: cannons converge ahead. Aim assist (difficulty-scaled, optional) only engages when the reticle is
+    // already close to a hostile's lead point: it bends the bolts onto that point and adds a little stick friction.
     const fwd = p.forward(_v).clone();
     const aim = p.pos.clone().addScaledVector(fwd, CONVERGENCE);
+    const prof = AIM_ASSIST[this.settings.difficulty];
+    this.lockTime = prof.lockTime;
+    this.assisted = false;
+    if (this.settings.aimAssist) {
+      let best: Targetable | null = null;
+      let bestK = 1;
+      const lead = new THREE.Vector3();
+      for (const h of ctx.world.targetables) {
+        if (h.team === p.team || !h.alive) continue;
+        const d = h.pos.distanceTo(p.pos);
+        if (d > prof.range || d < 20) continue;
+        _w.copy(h.pos).addScaledVector(h.vel, d / p.spec.boltSpeed).sub(p.pos).normalize();
+        const ang = Math.acos(clamp(_w.dot(fwd), -1, 1));
+        // Capture cone: base angle (narrower at long range) + the target's own angular size.
+        const cone = THREE.MathUtils.degToRad(prof.coneDeg) * clamp(800 / d, 0.5, 1) + Math.atan(h.radius / d);
+        const k = ang / cone;
+        if (k < bestK) {
+          bestK = k;
+          best = h;
+          lead.copy(h.pos).addScaledVector(h.vel, d / p.spec.boltSpeed);
+        }
+      }
+      if (best) {
+        aim.copy(lead);
+        this.assisted = true;
+        // Reticle friction: easier to stay on target, never steers for you.
+        const f = prof.friction * (1 - bestK);
+        p.ctrl.pitch *= 1 - f;
+        p.ctrl.yaw *= 1 - f;
+        // Soft targeting: follow what you're aiming at unless you picked a target recently.
+        if (best !== this.target && ctx.world.time - this.manualTargetAt > 4) this.target = best;
+      }
+    }
     const tg = this.target;
     let locked = false;
     if (tg?.alive) {
       const d = tg.pos.distanceTo(p.pos);
-      const lead = tg.pos.clone().addScaledVector(tg.vel, d / p.spec.boltSpeed);
-      _w.copy(lead).sub(p.pos).normalize();
-      if (_w.dot(fwd) > 0.9975 && d < 1200) aim.copy(lead);
       _w.copy(tg.pos).sub(p.pos).normalize();
-      if (_w.dot(fwd) > 0.992 && d < 1800 && ctx.torpedoes > 0) this.lockT = Math.min(LOCK_TIME, this.lockT + dt);
+      if (_w.dot(fwd) > 0.992 && d < 1800 && ctx.torpedoes > 0) this.lockT = Math.min(this.lockTime, this.lockT + dt);
       else this.lockT = Math.max(0, this.lockT - dt * 2);
-      locked = this.lockT >= LOCK_TIME;
+      locked = this.lockT >= this.lockTime;
     } else this.lockT = 0;
     this.audio.lockTone(locked);
 
@@ -727,10 +763,11 @@ export class Game {
         computerOff: ctx.computerOff,
         cockpit: this.cockpit && !this.lookBack,
         torpedoes: ctx.torpedoes,
-        lockProgress: this.lockT / LOCK_TIME,
+        lockProgress: this.lockT / this.lockTime,
         aimPoint: this.lookBack ? null : aim,
         showHud,
         enemyOnTail: this.enemyOnTail,
+        aimAssist: this.assisted,
         feedback: this.feedback,
         prompts: showHud && ctx.playerControl ? t('hud.prompts') : null,
         skip: this.level.kind === 'cinematic' ? this.skipT / SKIP_HOLD : null,

@@ -45,6 +45,8 @@ export interface HudState {
   aimPoint: THREE.Vector3 | null;
   showHud: boolean;
   enemyOnTail: boolean;
+  /** Aim assist currently bending the bolts onto a target. */
+  aimAssist: boolean;
   targetInfo: { name: string; hull: number; shielded: boolean; distance: number } | null;
   feedback: Feedback;
   /** One-line key reminder (bottom centre). */
@@ -229,7 +231,7 @@ export class Hud {
         cy = pr.y;
       }
     }
-    const col = p.canFire ? AMBER : 'rgba(255,179,71,0.35)';
+    const col = !p.canFire ? 'rgba(255,179,71,0.35)' : s.aimAssist ? RED : AMBER;
     c.strokeStyle = col;
     c.lineWidth = 1.6;
     c.beginPath();

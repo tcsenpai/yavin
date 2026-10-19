@@ -251,6 +251,7 @@ export class Menus {
       );
       row(t('set.sensitivity'), range(s.sensitivity, 0.3, 2.5, 0.05, (v) => (s.sensitivity = v)));
       row(t('set.invert'), check(s.invertY, (v) => (s.invertY = v)));
+      row(t('set.aimAssist'), check(s.aimAssist, (v) => (s.aimAssist = v)));
       row(t('set.master'), range(s.master, 0, 1, 0.01, (v) => (s.master = v)));
       row(t('set.music'), range(s.music, 0, 1, 0.01, (v) => (s.music = v)));
       row(t('set.voices'), check(s.voices, (v) => (s.voices = v)));
