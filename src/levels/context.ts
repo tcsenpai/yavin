@@ -16,6 +16,7 @@ export interface LevelStats {
   hits: number;
   time: number;
   forceUsed: boolean;
+  score: number;
 }
 
 export interface LevelContext {
@@ -64,12 +65,18 @@ export interface LevelContext {
   fail(reason: StringKey): void;
   /** Pop a centred banner (title + subtitle). */
   banner(title: StringKey, sub?: StringKey, seconds?: number): void;
+  /** Score + floating notification (kill feed / objective bonus). */
+  award(points: number, label: StringKey, params?: Record<string, string | number>): void;
   /** Prompt the player for an action key press; resolves when pressed (or after timeout). */
   waitAction(action: 'confirm' | 'sfoils' | 'deflectors' | 'targetComputer', hint: StringKey, timeout?: number): () => boolean;
 }
 
 export interface LevelDef {
   id: string;
+  /** mission = campaign flight; training = tutorial; cinematic = skippable non-interactive scene. */
+  kind: 'mission' | 'training' | 'cinematic';
+  /** Score needed for rank S (A ≥ 75 %, B ≥ 50 %). */
+  par?: number;
   titleKey: StringKey;
   subKey: StringKey;
   /** Text card shown before the level. */

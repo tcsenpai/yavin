@@ -7,8 +7,9 @@ import { RED, spawnPlayer, spawnShip } from './common';
 import type { LevelContext, LevelDef } from './context';
 import { DEATH_STAR_RADIUS, buildEnvironment } from './environment';
 
-export const level5: LevelDef = {
+export const epilogue: LevelDef = {
   id: 'epilogue',
+  kind: 'cinematic',
   titleKey: 'l5.title',
   subKey: 'l5.sub',
   introKey: 'l5.intro',

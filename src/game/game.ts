@@ -1,32 +1,61 @@
-// Top-level orchestration: menus ↔ levels, player control, camera, HUD, audio, the frame loop.
+// Top-level orchestration: menus ↔ levels, player control & flight assists, camera, HUD feedback, scoring.
 import * as THREE from 'three';
 import { AudioSystem, type MusicMood } from '../audio/audio';
 import { Engine } from '../core/engine';
-import { Input } from '../core/input';
+import { Input, type FlightInput } from '../core/input';
 import { clamp, damp } from '../core/rng';
 import { DIFFICULTY_SCALE, loadSettings, saveSettings, type Settings } from '../core/settings';
 import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
-import { Hud } from '../ui/hud';
-import { Menus } from '../ui/menus';
+import { buildEnvironment } from '../levels/environment';
+import type { XWingModel } from '../models/ships';
+import { Hud, type Feedback, type Objective } from '../ui/hud';
+import { Menus, type Rank } from '../ui/menus';
+import { Subsystem } from './capital';
 import { Comms } from './comms';
 import { ScriptRunner, type Script } from './script';
-import type { Ship } from './ship';
+import { Ship } from './ship';
+import { Tower } from './tower';
 import type { Targetable } from './types';
 import { World } from './world';
-import type { Objective } from '../ui/hud';
-import type { XWingModel } from '../models/ships';
-import { buildEnvironment } from '../levels/environment';
 
 type State = 'menu' | 'card' | 'playing' | 'paused' | 'result';
 
 const TORPEDOES = 6; // T-65: two launchers, three proton torpedoes each
 const LOCK_TIME = 1.1;
 const CONVERGENCE = 450;
+const SKIP_HOLD = 1.0; // seconds to hold to skip a cinematic
 
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _inv = new THREE.Quaternion();
+
+const newStats = (): LevelStats => ({ kills: 0, towers: 0, shots: 0, hits: 0, time: 0, forceUsed: false, score: 0 });
+
+/** Points and display name for anything the player destroys. */
+function killValue(target: Targetable): { points: number; name: StringKey } | null {
+  if (target instanceof Ship) return target.kind === 'tieadv' ? { points: 500, name: 'tgt.tieadv' } : { points: 100, name: target.nameKey ?? 'tgt.tie' };
+  if (target instanceof Tower) return target.kind === 'tower' ? { points: 150, name: 'tgt.tower' } : { points: 80, name: 'tgt.wall' };
+  if (target instanceof Subsystem) {
+    const pts = { shieldGen: 300, bridge: 600, hangar: 300, turbolaser: 120 }[target.kind];
+    return { points: pts, name: `tgt.${target.kind}` as StringKey };
+  }
+  return null;
+}
+
+export function targetName(target: Targetable): StringKey {
+  if (target instanceof Ship) return target.nameKey ?? (target.kind === 'tieadv' ? 'tgt.tieadv' : target.kind === 'tie' ? 'tgt.tie' : 'tgt.ally');
+  if (target instanceof Tower) return target.kind === 'tower' ? 'tgt.tower' : 'tgt.wall';
+  if (target instanceof Subsystem) return `tgt.${target.kind}` as StringKey;
+  return 'tgt.tie';
+}
+
+function hullFraction(target: Targetable): number {
+  if (target instanceof Ship) return clamp(target.hull / target.spec.hull, 0, 1);
+  if (target instanceof Tower || target instanceof Subsystem) return clamp(target.hp / target.maxHp, 0, 1);
+  return 1;
+}
 
 class Ctx implements LevelContext {
   player: Ship | null = null;
@@ -47,10 +76,12 @@ class Ctx implements LevelContext {
   shake = 0;
   flash = 0;
   r2Alive = true;
-  stats: LevelStats = { kills: 0, towers: 0, shots: 0, hits: 0, time: 0, forceUsed: false };
+  stats = newStats();
   scripts = new ScriptRunner();
   outcome: { kind: 'complete' } | { kind: 'fail'; reason: StringKey } | null = null;
   bannerState: { title: string; sub: string; alpha: number; life: number } | null = null;
+  pendingConfirm = false;
+  confirmPressed = false;
 
   constructor(
     readonly scene: THREE.Scene,
@@ -61,6 +92,7 @@ class Ctx implements LevelContext {
     readonly camera: THREE.PerspectiveCamera,
     readonly difficulty: number,
     readonly checkpoint: number,
+    private toast: (text: string, color: string) => void,
   ) {}
 
   run(script: Script): void {
@@ -74,7 +106,10 @@ class Ctx implements LevelContext {
     if (!o) return;
     const wasDone = o.done;
     Object.assign(o, patch);
-    if (!wasDone && o.done) this.audio.ui('objective');
+    if (!wasDone && o.done) {
+      this.audio.ui('objective');
+      this.toast(`${t('toast.objective')}: ${t(o.key, o.params)}`, '#ffe14a');
+    }
   }
   complete(): void {
     this.outcome ??= { kind: 'complete' };
@@ -84,6 +119,10 @@ class Ctx implements LevelContext {
   }
   banner(title: StringKey, sub?: StringKey, seconds = 3.5): void {
     this.bannerState = { title: t(title), sub: sub ? t(sub) : '', alpha: 0, life: seconds };
+  }
+  award(points: number, label: StringKey, params?: Record<string, string | number>): void {
+    this.stats.score += points;
+    this.toast(`+${points}  ${t(label, params)}`, '#ffd27a');
   }
   waitAction(action: 'confirm' | 'sfoils' | 'deflectors' | 'targetComputer', hint: StringKey, timeout = 15): () => boolean {
     this.hint = hint;
@@ -106,8 +145,6 @@ class Ctx implements LevelContext {
       return done;
     };
   }
-  pendingConfirm = false;
-  confirmPressed = false;
 }
 
 export class Game {
@@ -120,9 +157,10 @@ export class Game {
   private settings: Settings = loadSettings();
   private state: State = 'menu';
   private ctx: Ctx | null = null;
-  private levelIndex = 0;
+  private level: LevelDef;
   private checkpoint = 0;
-  private campaign: LevelStats = { kills: 0, towers: 0, shots: 0, hits: 0, time: 0, forceUsed: false };
+  private inCampaign = false;
+  private campaignStats = newStats();
   private last = performance.now();
   private elapsed = 0;
   private menuScene: THREE.Scene | null = null;
@@ -130,26 +168,51 @@ export class Game {
   private target: Targetable | null = null;
   private lockT = 0;
   private cockpit = false;
+  private hudHidden = false;
+  private lookBack = false;
   private camQuat = new THREE.Quaternion();
   private camPos = new THREE.Vector3();
   private deadTime = 0;
   private repairChirp = 0;
+  private skipT = 0;
   private stick = { x: 0, y: 0 };
   private enemyOnTail = false;
+  private feedback: Feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
 
-  constructor(container: HTMLElement, private levels: LevelDef[]) {
+  constructor(
+    container: HTMLElement,
+    private levels: LevelDef[],
+    private campaign: string[],
+  ) {
+    this.level = levels[0];
     this.engine = new Engine(container);
     this.input = new Input(this.engine.canvas);
     this.hud = new Hud(container);
     this.comms = new Comms(this.audio);
-    this.menus = new Menus(container, levels, this.settings, {
-      startCampaign: () => this.unlockAudio(() => this.menus.showCrawl(() => this.openLevel(0, 0))),
-      startLevel: (i, cp) => this.unlockAudio(() => this.openLevel(i, cp ?? 0)),
+    this.menus = new Menus(container, levels, campaign, this.settings, {
+      startCampaign: () =>
+        this.unlockAudio(() =>
+          this.menus.showCrawl(() => {
+            this.inCampaign = true;
+            this.campaignStats = newStats();
+            this.openLevel(campaign[0], 0);
+          }),
+        ),
+      startLevel: (id, cp) =>
+        this.unlockAudio(() => {
+          this.inCampaign = false;
+          this.openLevel(id, cp ?? 0);
+        }),
+      setDifficulty: (d) => {
+        this.settings.difficulty = d;
+        this.applySettings(this.settings);
+        this.openLevel(this.level.id, this.checkpoint);
+      },
       settingsChanged: (s) => this.applySettings(s),
       resume: () => this.resume(),
-      restart: (cp) => this.openLevel(this.levelIndex, cp ?? this.checkpoint),
+      restart: (cp) => this.openLevel(this.level.id, cp ?? this.checkpoint),
       quit: () => this.toMenu(),
-      next: () => this.openLevel(this.levelIndex + 1, 0),
+      next: () => this.openNext(),
       uiSound: (k) => this.audio.ui(k),
     });
     this.applySettings(this.settings);
@@ -160,14 +223,11 @@ export class Game {
       if (!this.input.locked && this.state === 'playing' && this.ctx?.playerControl && this.ctx.showHud) this.pause();
     });
     window.addEventListener('keydown', (e) => {
-      if (this.state === 'paused' && (e.code === 'Escape' || e.code === 'KeyP')) {
-        // Browsers need a gesture to re-lock; Esc closes the menu and the next click re-locks.
-        e.preventDefault();
-      }
+      if (this.state === 'playing' && (e.code === 'KeyP' || (e.code === 'Escape' && !this.input.locked))) this.pause();
     });
     this.buildMenuBackdrop();
     this.menus.showTitle();
-    requestAnimationFrame((t) => this.frame(t));
+    requestAnimationFrame((ts) => this.frame(ts));
   }
 
   private unlockAudio(then: () => void): void {
@@ -190,7 +250,7 @@ export class Game {
     this.applyAudioSettings();
   }
 
-  /** Slowly orbiting Death Star + Yavin behind the title menu. */
+  /** Slowly drifting Death Star + Yavin behind the title menu. */
   private buildMenuBackdrop(): void {
     const scene = new THREE.Scene();
     const env = buildEnvironment(scene, {
@@ -217,8 +277,10 @@ export class Game {
     this.input.releaseLock();
     this.teardownLevel();
     this.state = 'menu';
+    this.inCampaign = false;
     this.audio.stopEngine();
     this.audio.alarm(false);
+    this.audio.lockTone(false);
     this.audio.setMusic('menu');
     this.engine.fade = 0;
     if (this.menuScene) this.engine.setScene(this.menuScene);
@@ -233,20 +295,30 @@ export class Game {
     this.target = null;
   }
 
-  private openLevel(index: number, checkpoint: number): void {
-    if (index >= this.levels.length) {
+  private openNext(): void {
+    const i = this.campaign.indexOf(this.level.id);
+    if (i < 0 || i + 1 >= this.campaign.length) {
       this.toMenu();
       return;
     }
-    if (index === 0) this.campaign = { kills: 0, towers: 0, shots: 0, hits: 0, time: 0, forceUsed: false };
-    this.levelIndex = index;
+    this.inCampaign = true;
+    this.openLevel(this.campaign[i + 1], 0);
+  }
+
+  private openLevel(id: string, checkpoint: number): void {
+    const level = this.levels.find((l) => l.id === id);
+    if (!level) {
+      this.toMenu();
+      return;
+    }
+    this.level = level;
     this.checkpoint = checkpoint;
     this.input.releaseLock();
     this.teardownLevel();
-    const level = this.levels[index];
     this.state = 'card';
     this.audio.stopEngine();
     this.audio.alarm(false);
+    this.audio.lockTone(false);
     this.menus.showLoading();
     // Build behind the card so the first frame is ready.
     setTimeout(() => {
@@ -254,7 +326,10 @@ export class Game {
       const world = new World(scene, this.audio);
       const diff = DIFFICULTY_SCALE[this.settings.difficulty];
       world.difficulty = diff;
-      const ctx = new Ctx(scene, world, this.audio, this.comms, this.input, this.engine.camera, diff, checkpoint);
+      this.feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
+      const ctx = new Ctx(scene, world, this.audio, this.comms, this.input, this.engine.camera, diff, checkpoint, (text, color) =>
+        this.feedback.toasts.push({ text, color, life: 3.2 }),
+      );
       this.ctx = ctx;
       this.wireWorldEvents(ctx);
       level.setup(ctx);
@@ -262,6 +337,7 @@ export class Game {
       this.cockpit = false;
       this.deadTime = 0;
       this.lockT = 0;
+      this.skipT = 0;
       if (ctx.player) {
         this.camQuat.copy(ctx.player.quat);
         this.camPos.copy(ctx.player.pos);
@@ -269,24 +345,41 @@ export class Game {
       // Render one frame (compiles shaders) under the card.
       this.updateCamera(ctx, 0.016);
       this.engine.render(0);
-      this.menus.showCard(level, index, () => this.beginPlay());
+      // Cinematics start immediately (they are skippable); flyable levels show the mission card.
+      if (level.kind === 'cinematic') this.beginPlay();
+      else this.menus.showCard(level, this.settings.difficulty, () => this.beginPlay());
     }, 30);
   }
 
   private wireWorldEvents(ctx: Ctx): void {
     ctx.world.events = {
       onDestroyed: (target, killer) => {
-        if (killer && killer === ctx.player) {
-          if ('kind' in target && (target as Ship).spec) ctx.stats.kills++;
-        }
         if (target === this.target) this.target = null;
+        if (!killer || killer !== ctx.player) return;
+        const v = killValue(target);
+        if (target instanceof Ship) ctx.stats.kills++;
+        if (target instanceof Tower || target instanceof Subsystem) ctx.stats.towers++;
+        if (v) {
+          ctx.award(v.points, 'toast.kill', { name: t(v.name) });
+          this.feedback.kill = 0.5;
+        }
       },
       onTargetHit: (target, attacker) => {
-        if (attacker && attacker === ctx.player && target.team === 'empire') ctx.stats.hits++;
+        if (attacker && attacker === ctx.player && target.team === 'empire') {
+          ctx.stats.hits++;
+          this.feedback.hit = 0.18;
+        }
       },
-      onPlayerHit: () => {
+      onPlayerHit: (from) => {
         ctx.shake = Math.max(ctx.shake, 0.35);
         this.engine.damage = Math.min(1, this.engine.damage + 0.35);
+        const p = ctx.player;
+        if (!p) return;
+        // Direction indicator around the reticle, in the camera's frame.
+        _inv.copy(this.engine.camera.quaternion).invert();
+        _v.copy(from).sub(p.pos).applyQuaternion(_inv);
+        this.feedback.damage.push({ angle: Math.atan2(_v.x, _v.y), life: 1.2 });
+        if (this.feedback.damage.length > 6) this.feedback.damage.shift();
       },
       onPlayerCrash: () => {
         ctx.shake = Math.max(ctx.shake, 0.6);
@@ -307,8 +400,9 @@ export class Game {
   private pause(): void {
     if (this.state !== 'playing') return;
     this.state = 'paused';
+    this.input.releaseLock();
     this.audio.suspend();
-    this.menus.showPause();
+    this.menus.showPause(this.level.checkpoints, this.checkpoint);
   }
 
   private resume(): void {
@@ -320,39 +414,53 @@ export class Game {
     this.last = performance.now();
   }
 
+  private rank(score: number): Rank {
+    const par = this.level.par ?? 1000;
+    return score >= par ? 'S' : score >= par * 0.75 ? 'A' : score >= par * 0.5 ? 'B' : 'C';
+  }
+
   private finishLevel(ctx: Ctx): void {
     const o = ctx.outcome!;
     this.input.releaseLock();
     this.audio.stopEngine();
     this.audio.alarm(false);
+    this.audio.lockTone(false);
     this.state = 'result';
-    const level = this.levels[this.levelIndex];
-    if (o.kind === 'complete') {
-      for (const k of ['kills', 'towers', 'shots', 'hits', 'time'] as const) this.campaign[k] += ctx.stats[k];
-      this.campaign.forceUsed ||= ctx.stats.forceUsed;
-      const next = this.levelIndex + 1;
-      if (!this.settings.completed.includes(level.id)) {
-        this.settings.completed.push(level.id);
-        saveSettings(this.settings);
-      }
-      if (next >= this.levels.length) {
-        this.audio.setMusic('victory');
-        this.menus.showEnding(this.campaign);
-        return;
-      }
-      // Briefing / cinematic levels flow straight on.
-      if (!ctx.showHud) {
-        this.openLevel(next, 0);
-        return;
-      }
-      this.audio.ui('objective');
-      const hull = ctx.player ? (ctx.player.hull / ctx.player.spec.hull) * 100 : 0;
-      this.menus.showResult(level, ctx.stats, hull, true);
-    } else {
+    const level = this.level;
+    if (o.kind === 'fail') {
       this.audio.ui('fail');
       this.audio.setMusic('defeat');
       this.menus.showFail(o.reason, level.checkpoints, this.checkpoint);
+      return;
     }
+    if (level.kind === 'cinematic') {
+      // Epilogue closes the campaign; the briefing (an extra) returns to the menu.
+      if (this.inCampaign && this.campaign.indexOf(level.id) === this.campaign.length - 1) {
+        this.audio.setMusic('victory');
+        this.menus.showEnding(this.campaignStats, this.rank(this.campaignStats.score));
+      } else if (this.inCampaign) this.openNext();
+      else this.toMenu();
+      return;
+    }
+    // End-of-mission bonuses: hull integrity and gunnery.
+    const p = ctx.player;
+    const hull = p ? clamp(p.hull / p.spec.hull, 0, 1) * 100 : 0;
+    const accuracy = ctx.stats.shots ? ctx.stats.hits / ctx.stats.shots : 0;
+    const bonus = Math.round(hull * 5 + accuracy * 1000);
+    ctx.stats.score += bonus;
+    const rank = this.rank(ctx.stats.score);
+    if (!this.settings.completed.includes(level.id)) this.settings.completed.push(level.id);
+    const prev = this.settings.best[level.id];
+    const isBest = !prev || ctx.stats.score > prev.score;
+    if (isBest) this.settings.best[level.id] = { score: ctx.stats.score, rank, difficulty: this.settings.difficulty };
+    saveSettings(this.settings);
+    if (this.inCampaign) {
+      for (const k of ['kills', 'towers', 'shots', 'hits', 'time', 'score'] as const) this.campaignStats[k] += ctx.stats[k];
+      this.campaignStats.forceUsed ||= ctx.stats.forceUsed;
+    }
+    this.audio.ui('objective');
+    const hasNext = this.inCampaign && this.campaign.indexOf(level.id) < this.campaign.length - 1;
+    this.menus.showResult(level, ctx.stats, { hull, bonus, rank, best: isBest }, hasNext);
   }
 
   // ---------------------------------------------------------------- player
@@ -360,12 +468,12 @@ export class Game {
   private pickTarget(p: Ship, world: World, cycle: boolean): void {
     const fwd = p.forward(_v);
     const cands = world.targetables
-      .filter((t) => t.team === 'empire' && t.alive)
-      .map((t) => {
-        _w.copy(t.pos).sub(p.pos);
+      .filter((tg) => tg.team === 'empire' && tg.alive)
+      .map((tg) => {
+        _w.copy(tg.pos).sub(p.pos);
         const d = _w.length();
         const cos = _w.dot(fwd) / Math.max(d, 1);
-        return { t, score: (1.2 - cos) * 3000 + d * 0.5, cos, d };
+        return { tg, score: (1.2 - cos) * 3000 + d * 0.5, d };
       })
       .filter((c) => c.d < 5000)
       .sort((a, b) => a.score - b.score);
@@ -374,15 +482,32 @@ export class Game {
       return;
     }
     if (cycle && this.target) {
-      const i = cands.findIndex((c) => c.t === this.target);
-      this.target = cands[(i + 1) % cands.length].t;
-    } else this.target = cands[0].t;
+      const i = cands.findIndex((c) => c.tg === this.target);
+      this.target = cands[(i + 1) % cands.length].tg;
+    } else this.target = cands[0].tg;
+  }
+
+  /** Auto-level: roll wings level and bring the nose to the horizon; any stick input cancels it. */
+  private applyAutoLevel(p: Ship, inp: FlightInput): void {
+    if (Math.abs(inp.pitch) + Math.abs(inp.yaw) + Math.abs(inp.roll) > 0.25) {
+      p.autoLevel = false;
+      return;
+    }
+    const nose = Math.asin(clamp(p.forward(_w).y, -1, 1));
+    // Signed roll angle about the nose relative to world up: 0 = level, ±π = inverted, >0 = right wing down.
+    const rollErr = Math.atan2(-p.right(_v).y, p.up(_w).y);
+    p.ctrl.roll = clamp(-rollErr * 2.2, -1, 1);
+    p.ctrl.pitch = Math.abs(rollErr) < 0.6 ? clamp(-nose * 2.5, -1, 1) : 0;
+    p.ctrl.yaw = 0;
+    if (Math.abs(rollErr) < 0.03 && Math.abs(nose) < 0.03) p.autoLevel = false;
   }
 
   private controlPlayer(ctx: Ctx, p: Ship, dt: number): THREE.Vector3 | null {
     const inp = this.input.read(dt);
     this.stick = inp.stick;
+    this.lookBack = inp.lookBack;
     if (this.input.consume('camera')) this.cockpit = !this.cockpit;
+    if (this.input.consume('hud')) this.hudHidden = !this.hudHidden;
     if (this.input.consume('confirm') && ctx.pendingConfirm) ctx.confirmPressed = true;
     if (!ctx.playerControl || p.brain) {
       this.input.clearPresses();
@@ -391,7 +516,12 @@ export class Game {
     p.ctrl.pitch = inp.pitch;
     p.ctrl.yaw = inp.yaw;
     p.ctrl.roll = inp.roll;
+    if (this.input.consume('level')) p.autoLevel = !p.autoLevel;
+    if (p.autoLevel) this.applyAutoLevel(p, inp);
     p.throttle = clamp(p.throttle + inp.throttleDelta * 0.55 * dt, 0, 1);
+    for (const [k, v] of [['throttle1', 0.25], ['throttle2', 0.5], ['throttle3', 0.75], ['throttle4', 1]] as const) {
+      if (this.input.consume(k)) p.throttle = v;
+    }
     if (this.input.consume('sfoils')) {
       p.sfoilTarget = p.sfoilTarget > 0.5 ? 0 : 1;
       this.audio.sfoils();
@@ -404,11 +534,21 @@ export class Game {
       ctx.computerOff = !ctx.computerOff;
       this.audio.ui('select');
     }
+    if (this.input.consume('targetAttacker')) {
+      // Target whoever last hit us, else the closest hostile fighter behind.
+      const att = p.lastAttacker?.alive && p.lastAttacker.team !== p.team ? p.lastAttacker : null;
+      const tail = ctx.world.ships.filter((s) => s.alive && s.team !== p.team).sort((a, b) => a.pos.distanceToSquared(p.pos) - b.pos.distanceToSquared(p.pos))[0];
+      const pick = att ?? tail ?? null;
+      if (pick) {
+        this.target = pick;
+        this.audio.ui('select');
+      }
+    }
     const cycle = this.input.consume('target');
     if (cycle || !this.target?.alive) this.pickTarget(p, ctx.world, cycle);
 
-    // Aim: cannons converge ahead; gentle assist pulls onto the lead point when close to it.
-    const fwd = p.forward(_v);
+    // Aim: cannons converge ahead; gentle assist bends the bolts onto the lead point when close to it.
+    const fwd = p.forward(_v).clone();
     const aim = p.pos.clone().addScaledVector(fwd, CONVERGENCE);
     const tg = this.target;
     let locked = false;
@@ -416,8 +556,7 @@ export class Game {
       const d = tg.pos.distanceTo(p.pos);
       const lead = tg.pos.clone().addScaledVector(tg.vel, d / p.spec.boltSpeed);
       _w.copy(lead).sub(p.pos).normalize();
-      const cos = _w.dot(fwd);
-      if (cos > 0.9975 && d < 1200) aim.copy(lead);
+      if (_w.dot(fwd) > 0.9975 && d < 1200) aim.copy(lead);
       _w.copy(tg.pos).sub(p.pos).normalize();
       if (_w.dot(fwd) > 0.992 && d < 1800 && ctx.torpedoes > 0) this.lockT = Math.min(LOCK_TIME, this.lockT + dt);
       else this.lockT = Math.max(0, this.lockT - dt * 2);
@@ -451,7 +590,15 @@ export class Game {
       this.camPos.copy(p.pos);
     }
     const model = p.model as XWingModel;
-    if (this.cockpit && p.alive && model.cockpitAnchor) {
+    if (this.lookBack && p.alive) {
+      // Rear view: camera ahead of the nose looking back over the ship (who's on my tail?).
+      p.model.root.visible = true;
+      _v.set(0, 5, -26).applyQuaternion(p.quat);
+      cam.position.copy(p.pos).add(_v);
+      _w.set(0, 2, 120).applyQuaternion(p.quat).add(p.pos);
+      cam.up.set(0, 1, 0).applyQuaternion(p.quat);
+      cam.lookAt(_w);
+    } else if (this.cockpit && p.alive && model.cockpitAnchor) {
       p.model.root.updateMatrixWorld();
       model.cockpitAnchor.getWorldPosition(cam.position);
       cam.quaternion.copy(p.quat);
@@ -493,18 +640,35 @@ export class Game {
     return false;
   }
 
+  private updateFeedback(dt: number): void {
+    const f = this.feedback;
+    f.hit = Math.max(0, f.hit - dt);
+    f.kill = Math.max(0, f.kill - dt);
+    for (const d of f.damage) d.life -= dt;
+    f.damage = f.damage.filter((d) => d.life > 0);
+    for (const tst of f.toasts) tst.life -= dt;
+    f.toasts = f.toasts.filter((tst) => tst.life > 0).slice(-5);
+    f.score = this.ctx?.stats.score ?? 0;
+  }
+
   private step(ctx: Ctx, dt: number): void {
     ctx.stats.time += dt;
     const p = ctx.player;
     let aim: THREE.Vector3 | null = null;
-    if (p?.alive) aim = this.controlPlayer(ctx, p, dt);
+    if (this.level.kind === 'cinematic') {
+      // Cinematics: hold Enter/Space to skip.
+      const inp = this.input.read(dt);
+      this.skipT = inp.skipHeld ? this.skipT + dt : Math.max(0, this.skipT - dt * 2);
+      if (this.skipT >= SKIP_HOLD) ctx.complete();
+    } else if (p?.alive) aim = this.controlPlayer(ctx, p, dt);
     else this.input.read(dt);
     ctx.scripts.update(dt);
     ctx.onUpdate?.(dt);
     ctx.world.update(dt);
     this.comms.update(dt);
+    this.updateFeedback(dt);
 
-    if (p) {
+    if (p && this.level.kind !== 'cinematic') {
       if (p.alive) {
         // R2-D2 patches the hull between hits.
         if (ctx.r2Alive && p.sinceHit > 4 && p.hull < p.spec.hull * 0.8) {
@@ -523,6 +687,7 @@ export class Game {
         this.deadTime += dt;
         this.audio.stopEngine();
         this.audio.alarm(false);
+        this.audio.lockTone(false);
         if (this.deadTime > 2.8) ctx.fail('fail.destroyed');
       }
     }
@@ -542,12 +707,15 @@ export class Game {
     this.engine.flash = ctx.flash;
     ctx.world.fx.setViewport(window.innerHeight * Math.min(window.devicePixelRatio, 2), cam.fov);
 
+    const tg = this.target?.alive ? this.target : null;
+    const showHud = ctx.showHud && !this.hudHidden;
     this.hud.draw(
       {
         world: ctx.world,
         player: p,
         camera: cam,
-        target: this.target,
+        target: tg,
+        targetInfo: tg && p ? { name: t(targetName(tg)), hull: hullFraction(tg), shielded: tg instanceof Subsystem && tg.shielded, distance: tg.pos.distanceTo(p.pos) } : null,
         objectives: ctx.objectives,
         markers: ctx.markers,
         timer: ctx.timer,
@@ -557,12 +725,17 @@ export class Game {
         stick: this.stick,
         computer: ctx.computer,
         computerOff: ctx.computerOff,
-        cockpit: this.cockpit,
+        cockpit: this.cockpit && !this.lookBack,
         torpedoes: ctx.torpedoes,
         lockProgress: this.lockT / LOCK_TIME,
-        aimPoint: aim,
-        showHud: ctx.showHud,
+        aimPoint: this.lookBack ? null : aim,
+        showHud,
         enemyOnTail: this.enemyOnTail,
+        feedback: this.feedback,
+        prompts: showHud && ctx.playerControl ? t('hud.prompts') : null,
+        skip: this.level.kind === 'cinematic' ? this.skipT / SKIP_HOLD : null,
+        rearView: this.lookBack,
+        autoLevel: !!p?.autoLevel,
       },
       dt,
     );
@@ -571,7 +744,7 @@ export class Game {
   }
 
   private frame(now: number): void {
-    requestAnimationFrame((t) => this.frame(t));
+    requestAnimationFrame((ts) => this.frame(ts));
     const dt = Math.min((now - this.last) / 1000, 0.05);
     this.last = now;
     this.audio.update(dt);

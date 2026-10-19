@@ -97,8 +97,9 @@ function holoTrench(): { group: THREE.Group; fighter: THREE.Mesh; torp: THREE.Me
   return { group: g, fighter, torp, port };
 }
 
-export const level0: LevelDef = {
+export const briefing: LevelDef = {
   id: 'briefing',
+  kind: 'cinematic',
   titleKey: 'l0.title',
   subKey: 'l0.sub',
   introKey: 'l0.intro',

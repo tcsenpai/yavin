@@ -34,7 +34,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 
 .panel { background: var(--bg); border: 1px solid rgba(255, 179, 71, 0.35); padding: 28px 34px; min-width: 380px; max-width: min(720px, 92vw); max-height: 90vh; overflow: auto;
   backdrop-filter: blur(6px); display: flex; flex-direction: column; gap: 12px; }
-.panel.wide { max-width: min(980px, 94vw); }
+.panel.wide { width: min(980px, 94vw); max-width: min(980px, 94vw); }
 .panel h2 { margin: 0; font-size: 26px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
 .panel .pre { letter-spacing: 0.4em; font-size: 12px; color: var(--amber); text-transform: uppercase; }
 .panel .intro { line-height: 1.6; font-size: 16px; white-space: pre-line; margin: 6px 0; }
@@ -45,6 +45,13 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .levels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .level { border: 1px solid rgba(255, 179, 71, 0.3); padding: 14px; display: flex; flex-direction: column; gap: 6px; background: rgba(0, 0, 0, 0.35); }
 .level.done { border-color: rgba(255, 225, 74, 0.55); }
+.section { margin-top: 10px; font-size: 12px; letter-spacing: 0.35em; text-transform: uppercase; color: var(--amber); border-bottom: 1px solid rgba(255, 179, 71, 0.25); padding-bottom: 4px; }
+.rank { color: var(--gold); letter-spacing: 0.05em; }
+.result-head { display: flex; align-items: center; gap: 20px; }
+.rank-big { font-size: 64px; font-weight: 800; width: 84px; height: 84px; display: grid; place-items: center; border: 2px solid currentColor; }
+.rank-S { color: #ffe14a; } .rank-A { color: #8fd3ff; } .rank-B { color: #9fe39f; } .rank-C { color: #c9b9a0; }
+.best { color: var(--gold); font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; margin-top: 4px; }
+.diff .chip { min-width: 70px; }
 .level .num { font-size: 12px; color: var(--amber); letter-spacing: 0.3em; }
 .level .name { font-size: 18px; color: var(--gold); text-transform: uppercase; letter-spacing: 0.08em; }
 .level .desc { font-size: 13px; opacity: 0.8; flex: 1; }

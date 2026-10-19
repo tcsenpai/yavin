@@ -23,7 +23,8 @@ export type Speaker =
   | 'officer'
   | 'tarkin'
   | 'dodonna'
-  | 'r2';
+  | 'r2'
+  | 'instructor';
 
 export const SPEAKER_NAME: Record<Speaker, StringKey> = {
   luke: 'spk.luke',
@@ -47,6 +48,7 @@ export const SPEAKER_NAME: Record<Speaker, StringKey> = {
   tarkin: 'spk.tarkin',
   dodonna: 'spk.dodonna',
   r2: 'spk.r2',
+  instructor: 'spk.instructor',
 };
 
 /** Subtitle colour per allegiance. */
@@ -72,6 +74,7 @@ export const SPEAKER_COLOR: Record<Speaker, string> = {
   tarkin: '#9fff9f',
   dodonna: '#9ad0ff',
   r2: '#7ab8ff',
+  instructor: '#8fe3c8',
 };
 
 // Voice character for optional speech synthesis.
@@ -97,6 +100,7 @@ const VOICE: Record<Speaker, { pitch: number; rate: number }> = {
   tarkin: { pitch: 0.7, rate: 0.9 },
   dodonna: { pitch: 0.7, rate: 0.92 },
   r2: { pitch: 2, rate: 1.5 },
+  instructor: { pitch: 0.9, rate: 1.0 },
 };
 
 export interface CommLine {

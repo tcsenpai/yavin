@@ -45,6 +45,23 @@ export interface HudState {
   aimPoint: THREE.Vector3 | null;
   showHud: boolean;
   enemyOnTail: boolean;
+  targetInfo: { name: string; hull: number; shielded: boolean; distance: number } | null;
+  feedback: Feedback;
+  /** One-line key reminder (bottom centre). */
+  prompts: string | null;
+  /** Cinematic hold-to-skip progress 0..1, or null when not skippable. */
+  skip: number | null;
+  rearView: boolean;
+  autoLevel: boolean;
+}
+
+/** Combat feedback, modelled on modern space-combat HUDs (hit/kill markers, damage arcs, kill feed). */
+export interface Feedback {
+  hit: number; // seconds left on the hit marker
+  kill: number; // seconds left on the kill marker
+  damage: { angle: number; life: number }[]; // screen-space angle (0 = up) of incoming fire
+  toasts: { text: string; color: string; life: number }[];
+  score: number;
 }
 
 const AMBER = '#ffb347';
@@ -104,18 +121,91 @@ export class Hud {
     if (s.showHud && s.player?.alive) {
       this.drawMarkers(s);
       this.drawReticle(s);
+      this.drawFeedback(s.feedback);
       this.drawStatus(s);
       this.drawScanner(s);
+      if (s.targetInfo) this.drawTargetPanel(s.targetInfo);
       if (s.computer) this.drawComputer(s.computer);
       if (s.computerOff) this.drawForce();
+      if (s.rearView) this.text(t('hud.rearView'), this.w / 2, 96, 16, AMBER, 'center', FONT, '700');
+      if (s.autoLevel) this.text(t('hud.autoLevel'), this.w / 2, this.h / 2 + 80, 13, CYAN, 'center');
     }
     if (s.showHud) {
       this.drawObjectives(s);
       this.drawTimer(s);
+      this.drawScoreAndFeed(s.feedback);
+      if (s.prompts) this.text(s.prompts, this.w / 2, this.h - 10, 11, 'rgba(242,230,201,0.55)', 'center', MONO, '500');
     }
-    this.drawComms(s.comms);
+    this.drawComms(s.comms, !!s.computer && s.showHud);
     if (s.hint) this.drawHint(s.hint);
     if (s.banner && s.banner.alpha > 0) this.drawBanner(s.banner);
+    if (s.skip !== null) this.drawSkip(s.skip);
+  }
+
+  /** Hit marker (white X), kill marker (red, bigger), directional damage arcs around the reticle. */
+  private drawFeedback(f: Feedback): void {
+    const c = this.ctx;
+    const cx = this.w / 2;
+    const cy = this.h / 2;
+    const xMark = (r0: number, r1: number, color: string, width: number) => {
+      c.strokeStyle = color;
+      c.lineWidth = width;
+      c.beginPath();
+      for (let i = 0; i < 4; i++) {
+        const a = Math.PI / 4 + (i * Math.PI) / 2;
+        c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+        c.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      }
+      c.stroke();
+    };
+    if (f.kill > 0) xMark(14, 30, `rgba(255,74,58,${Math.min(1, f.kill * 3)})`, 3);
+    else if (f.hit > 0) xMark(10, 20, `rgba(255,255,255,${Math.min(1, f.hit * 8)})`, 2);
+    for (const d of f.damage) {
+      const a = d.angle - Math.PI / 2; // 0 = up on screen
+      c.strokeStyle = `rgba(255,60,40,${Math.min(1, d.life) * 0.9})`;
+      c.lineWidth = 6;
+      c.beginPath();
+      c.arc(cx, cy, 150, a - 0.28, a + 0.28);
+      c.stroke();
+    }
+  }
+
+  private drawScoreAndFeed(f: Feedback): void {
+    const x = this.w - 24;
+    this.text(t('hud.score'), x, 28, 11, AMBER, 'right');
+    this.text(String(f.score).padStart(6, '0'), x, 52, 22, '#ffe14a', 'right', MONO, '700');
+    f.toasts.forEach((tst, i) => {
+      this.ctx.globalAlpha = Math.min(1, tst.life * 2);
+      this.text(tst.text, x, 80 + i * 20, 13, tst.color, 'right', FONT, '600');
+    });
+    this.ctx.globalAlpha = 1;
+  }
+
+  private drawTargetPanel(ti: { name: string; hull: number; shielded: boolean; distance: number }): void {
+    const w = 220;
+    const x = this.w - w - 30;
+    const y = this.h - 260;
+    this.panel(x, y, w, 62);
+    this.text(ti.name.toUpperCase(), x + 12, y + 20, 12, RED, 'left', FONT, '700');
+    this.text(`${Math.round(ti.distance)} m`, x + w - 12, y + 20, 11, AMBER, 'right', MONO);
+    this.bar(x + 12, y + 30, w - 24, 9, ti.hull, ti.shielded ? CYAN : RED);
+    if (ti.shielded) this.text(t('hud.shielded'), x + 12, y + 55, 10, CYAN, 'left', FONT, '700');
+  }
+
+  private drawSkip(p: number): void {
+    const c = this.ctx;
+    const x = this.w - 60;
+    const y = this.h - 60;
+    c.strokeStyle = 'rgba(255,255,255,0.25)';
+    c.lineWidth = 3;
+    c.beginPath();
+    c.arc(x, y, 18, 0, Math.PI * 2);
+    c.stroke();
+    c.strokeStyle = '#ffe14a';
+    c.beginPath();
+    c.arc(x, y, 18, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, p));
+    c.stroke();
+    this.text(t('hud.holdSkip'), x - 30, y + 5, 13, 'rgba(242,230,201,0.85)', 'right');
   }
 
   private text(str: string, x: number, y: number, size: number, color: string, align: CanvasTextAlign = 'left', font = FONT, weight = '600'): void {
@@ -154,6 +244,23 @@ export class Hud {
     }
     c.fillStyle = col;
     c.fillRect(cx - 1, cy - 1, 2, 2);
+    // Squadrons-style reticle arcs: throttle on the left, deflectors on the right.
+    // `bottom`/`top` are canvas angles; the bar fills from the bottom end toward the top end.
+    const arc = (bottom: number, top: number, v: number, color: string) => {
+      const end = bottom + (top - bottom) * clamp(v, 0, 1);
+      c.lineWidth = 3;
+      c.strokeStyle = 'rgba(255,179,71,0.18)';
+      c.beginPath();
+      c.arc(cx, cy, 50, Math.min(bottom, top), Math.max(bottom, top));
+      c.stroke();
+      c.strokeStyle = color;
+      c.beginPath();
+      c.arc(cx, cy, 50, Math.min(bottom, end), Math.max(bottom, end));
+      c.stroke();
+    };
+    arc(Math.PI * 0.68, Math.PI * 1.32, p.throttle, '#ffd68a');
+    const sh = p.spec.shields ? (p.shieldFore + p.shieldAft) / (p.spec.shields * 2) : 0;
+    arc(Math.PI * 0.32, Math.PI * -0.32, sh, sh > 0.3 ? CYAN : RED);
     // Virtual stick indicator.
     const sx = this.w / 2 + s.stick.x * 120;
     const sy = this.h / 2 + s.stick.y * 120;
@@ -460,18 +567,19 @@ export class Hud {
     this.text(`${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`, this.w / 2, 56, 26, col, 'center', MONO, '700');
   }
 
-  private drawComms(comms: Comms): void {
+  /** Subtitles sit at the bottom edge (clear of the ship and reticle); above the targeting computer when it is up. */
+  private drawComms(comms: Comms, raised: boolean): void {
     const line = comms.current;
     if (!line) return;
     const c = this.ctx;
     const text = t(line.key, line.params);
     const name = t(SPEAKER_NAME[line.speaker]);
-    const maxW = Math.min(760, this.w - 80);
+    const maxW = Math.max(420, Math.min(700, this.w - 600));
     c.font = `500 17px ${FONT}`;
     const lines = wrap(c, text, maxW - 40);
     const boxH = 40 + lines.length * 23;
     const x = this.w / 2 - maxW / 2;
-    const y = this.h - 230 - boxH;
+    const y = raised ? this.h - 290 - boxH : this.h - 34 - boxH;
     const fade = Math.min(1, line.elapsed * 6, (line.duration - line.elapsed) * 4 + 0.3);
     c.globalAlpha = clamp(fade, 0, 1);
     c.fillStyle = line.ghost ? 'rgba(20,40,70,0.35)' : 'rgba(6,8,12,0.62)';

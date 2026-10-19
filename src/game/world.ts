@@ -13,7 +13,8 @@ import { Weapons } from './weapons';
 export interface WorldEvents {
   onDestroyed?(target: Targetable, killer: Targetable | null): void;
   onTargetHit?(target: Targetable, attacker: Targetable | null): void;
-  onPlayerHit?(amount: number): void;
+  /** `from`: where the shot came from (attacker position, else impact point). */
+  onPlayerHit?(from: THREE.Vector3): void;
   onPlayerCrash?(): void;
 }
 
@@ -110,7 +111,7 @@ export class World {
     this.events.onTargetHit?.(target, attacker);
     if (target === this.player) {
       this.audio.playerHit();
-      this.events.onPlayerHit?.(1);
+      this.events.onPlayerHit?.(attacker?.pos ?? point);
     }
     if (target instanceof Ship && target.hull <= 0 && target.alive) this.destroyShip(target, attacker);
     if (target instanceof Tower && target.hp <= 0 && target.alive) this.destroyTower(target, attacker);

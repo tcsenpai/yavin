@@ -17,6 +17,7 @@ export function spawnPlayer(ctx: LevelContext, pos: THREE.Vector3, heading = new
   ctx.world.addShip(s);
   ctx.world.player = s;
   ctx.player = s;
+  s.damageTakenScale = ctx.difficulty ** 1.5;
   return s;
 }
 
@@ -25,6 +26,8 @@ export function spawnShip(ctx: LevelContext, kind: ShipKind, nameKey: StringKey 
   s.pos.copy(pos);
   if (heading) s.quat.copy(heading);
   s.vel.set(0, 0, -1).applyQuaternion(s.quat).multiplyScalar(s.speed);
+  // Rebel AI pilots soften targets but the player should score most kills.
+  if (s.team === 'rebel') s.damageScale = 0.22;
   ctx.world.addShip(s);
   return s;
 }

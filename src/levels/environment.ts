@@ -33,6 +33,8 @@ export interface EnvOptions {
   yavinPos?: THREE.Vector3;
   yavin4Pos?: THREE.Vector3;
   ambient?: number;
+  /** Camera-aligned fill light intensity (higher in open space). */
+  viewFill?: number;
 }
 
 export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environment {
@@ -78,6 +80,10 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
   }
   // Fill: cool bounce from space + warm reflected Yavin light from below.
   scene.add(new THREE.HemisphereLight(0x5a6c8a, 0x3a2a1c, opts.ambient ?? 0.55));
+  // Viewer fill ("key light from the camera"): keeps black TIE panels and shadowed hulls readable
+  // against black space — the same trick space-combat games use for silhouette legibility.
+  const viewFill = new THREE.DirectionalLight(0xbfd2ff, opts.viewFill ?? 0.35);
+  scene.add(viewFill, viewFill.target);
 
   return {
     sunLight,
@@ -96,6 +102,8 @@ export function buildEnvironment(scene: THREE.Scene, opts: EnvOptions): Environm
       const fz = Math.round(focus.z / step) * step;
       sunLight.target.position.set(fx, fy, fz);
       sunLight.position.set(fx, fy, fz).addScaledVector(SUN_DIRECTION, 1500);
+      viewFill.position.copy(camera.position);
+      camera.getWorldDirection(viewFill.target.position).add(camera.position);
     },
   };
 }

@@ -37,7 +37,7 @@ export interface ShipSpec {
 export const SPECS: Record<ShipKind, ShipSpec> = {
   xwing: { minSpeed: 70, maxSpeed: 230, accel: 70, pitchRate: 1.2, yawRate: 0.7, rollRate: 2.3, hull: 100, shields: 60, radius: 6.5, fireInterval: 0.17, boltSpeed: 800, damage: 18, bolt: 'red', team: 'rebel' },
   ywing: { minSpeed: 60, maxSpeed: 190, accel: 50, pitchRate: 1.1, yawRate: 0.8, rollRate: 2.0, hull: 140, shields: 80, radius: 8, fireInterval: 0.3, boltSpeed: 750, damage: 18, bolt: 'red', team: 'rebel' },
-  tie: { minSpeed: 80, maxSpeed: 255, accel: 90, pitchRate: 1.9, yawRate: 1.4, rollRate: 3.4, hull: 34, shields: 0, radius: 4.5, fireInterval: 0.26, boltSpeed: 750, damage: 9, bolt: 'green', team: 'empire' },
+  tie: { minSpeed: 80, maxSpeed: 255, accel: 90, pitchRate: 1.9, yawRate: 1.4, rollRate: 3.4, hull: 34, shields: 0, radius: 4.5, fireInterval: 0.42, boltSpeed: 750, damage: 7, bolt: 'green', team: 'empire' },
   tieadv: { minSpeed: 80, maxSpeed: 260, accel: 90, pitchRate: 1.9, yawRate: 1.4, rollRate: 3.2, hull: 300, shields: 120, radius: 5, fireInterval: 0.2, boltSpeed: 800, damage: 14, bolt: 'green', team: 'empire' },
   falcon: { minSpeed: 80, maxSpeed: 270, accel: 80, pitchRate: 1.0, yawRate: 0.8, rollRate: 1.6, hull: 600, shields: 300, radius: 18, fireInterval: 0.09, boltSpeed: 850, damage: 25, bolt: 'red', team: 'rebel' },
 };
@@ -89,6 +89,12 @@ export class Ship implements Targetable {
   damageSmoke = 0;
   /** Scripted ships positioned directly by their brain (trench run choreography). */
   kinematic = false;
+  /** Multiplier on cannon damage (AI wingmen fight, but the player gets most of the kills). */
+  damageScale = 1;
+  /** Player flight assist: rolling wings level / nose to the horizon (Z). */
+  autoLevel = false;
+  /** Multiplier on incoming damage (player: difficulty). */
+  damageTakenScale = 1;
 
   constructor(
     readonly kind: ShipKind,
@@ -165,7 +171,7 @@ export class Ship implements Targetable {
     this.lastAttacker = attacker;
     if (this.invulnerable) return;
     const fore = this.forward(_v).dot(_m.copy(from).sub(this.pos)) >= 0;
-    let rest = amount;
+    let rest = amount * this.damageTakenScale;
     if (fore) {
       const a = Math.min(this.shieldFore, rest);
       this.shieldFore -= a;
@@ -247,7 +253,7 @@ export class Ship implements Targetable {
       const dir = aim ? aim.clone().sub(origin).normalize() : fwd.clone();
       // Never fire backwards through the convergence point.
       if (dir.dot(fwd) < 0.9) dir.copy(fwd);
-      world.weapons.fireBolt(this, origin, dir, this.spec.boltSpeed, this.spec.bolt, this.spec.damage);
+      world.weapons.fireBolt(this, origin, dir, this.spec.boltSpeed, this.spec.bolt, this.spec.damage * this.damageScale);
       world.fx.muzzle(origin, this.vel);
     }
     world.audio.laser(this.kind === 'xwing' || this.kind === 'ywing' ? 'xwing' : this.kind === 'falcon' ? 'falcon' : 'tie', this.isPlayer ? undefined : this.pos);

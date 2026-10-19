@@ -16,8 +16,10 @@ const WINDOW_NEAR = 90;
 const WINDOW_FAR = 480;
 const FORCE_WINDOW_FAR = 640;
 
-export const level4: LevelDef = {
+export const mission3: LevelDef = {
   id: 'trench',
+  kind: 'mission',
+  par: 2400,
   titleKey: 'l4.title',
   subKey: 'l4.sub',
   introKey: 'l4.intro',
@@ -234,6 +236,9 @@ export const level4: LevelDef = {
     function* success(): Script {
       finished = true;
       ctx.stats.hits += 2;
+      ctx.award(1500, 'm3.award.port');
+      if (ctx.computerOff) ctx.award(1000, 'm3.award.force');
+      if (ctx.timer) ctx.award(Math.round(ctx.timer.seconds) * 5, 'm3.award.time');
       ctx.setObjective(1, { done: true });
       ctx.timer = null;
       ctx.computer = null;

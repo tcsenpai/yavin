@@ -8,6 +8,10 @@ export interface FlightInput {
   throttleDelta: number; // -1..1 per second
   fire: boolean;
   torpedo: boolean; // edge-triggered
+  /** Held: rear view (B). */
+  lookBack: boolean;
+  /** Held: skip a cinematic (Enter / Space / gamepad A). */
+  skipHeld: boolean;
   stick: { x: number; y: number }; // virtual mouse stick, for the HUD cursor
 }
 
@@ -19,7 +23,15 @@ export type Action =
   | 'deflectors'
   | 'pause'
   | 'confirm'
-  | 'torpedo';
+  | 'torpedo'
+  | 'level'
+  | 'targetAttacker'
+  | 'hud'
+  | 'throttle1'
+  | 'throttle2'
+  | 'throttle3'
+  | 'throttle4'
+  | 'skipStep';
 
 const ACTION_KEYS: Record<Action, string[]> = {
   sfoils: ['KeyX'],
@@ -30,6 +42,14 @@ const ACTION_KEYS: Record<Action, string[]> = {
   pause: ['Escape', 'KeyP'],
   confirm: ['Enter', 'NumpadEnter'],
   torpedo: ['KeyF'],
+  level: ['KeyZ'],
+  targetAttacker: ['KeyG'],
+  hud: ['KeyH'],
+  throttle1: ['Digit1'],
+  throttle2: ['Digit2'],
+  throttle3: ['Digit3'],
+  throttle4: ['Digit4'],
+  skipStep: ['KeyN'],
 };
 
 const GAMEPAD_ACTIONS: Partial<Record<Action, number>> = {
@@ -41,6 +61,8 @@ const GAMEPAD_ACTIONS: Partial<Record<Action, number>> = {
   pause: 9, // start
   confirm: 0, // A
   torpedo: 1, // B
+  level: 10, // left stick click
+  targetAttacker: 11, // right stick click
 };
 
 export class Input {
@@ -182,6 +204,8 @@ export class Input {
       throttleDelta: clamp(throttle, -1, 1),
       fire,
       torpedo,
+      lookBack: this.key('KeyB') || !!pad?.buttons[13]?.pressed,
+      skipHeld: this.key('Enter', 'Space', 'NumpadEnter') || !!pad?.buttons[0]?.pressed,
       stick: { x: this.stickX, y: this.stickY },
     };
   }

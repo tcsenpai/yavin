@@ -60,6 +60,8 @@ export class CapitalShip {
   readonly vel = new THREE.Vector3();
   readonly subsystems: Subsystem[];
   disabled = false;
+  /** Weapons and hangar idle until the level engages (approach phase). */
+  active = true;
   /** TIEs launched from the hangar (level code wires their kill events). */
   onLaunch: ((tie: Ship) => void) | null = null;
   onSubsystemDestroyed: ((s: Subsystem, killer: Targetable | null) => void) | null = null;
@@ -131,6 +133,7 @@ export class CapitalShip {
       this.spin.set((Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.01, (Math.random() < 0.5 ? -1 : 1) * 0.025);
     }
     this.onSubsystemDestroyed?.(s, killer);
+    world.events.onDestroyed?.(s, killer);
   }
 
   update(world: World, dt: number): void {
@@ -155,7 +158,7 @@ export class CapitalShip {
     this.model.update(dt);
     root.updateMatrixWorld(true);
     for (const s of this.subsystems) s.part.anchor.getWorldPosition(s.pos);
-    if (this.disabled) return;
+    if (this.disabled || !this.active) return;
 
     // Turbolaser batteries.
     for (const s of this.subsystems) {

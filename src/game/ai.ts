@@ -123,6 +123,12 @@ export class DogfightBrain {
       const dist = t.pos.distanceTo(ship.pos);
       const lead = dist / ship.spec.boltSpeed;
       _aim.copy(t.pos).addScaledVector(t.vel, lead * clamp(this.opts.skill * 1.2, 0, 1));
+      // Imperfect gunnery: a slowly wandering aim error that shrinks with skill.
+      const err = dist * 0.035 * clamp(1.25 - this.opts.skill, 0.15, 1.2);
+      const ph = ship.id * 1.7 + world.time * 0.9;
+      _aim.x += Math.sin(ph) * err;
+      _aim.y += Math.cos(ph * 1.3) * err;
+      _aim.z += Math.sin(ph * 0.7 + 1) * err;
       dir.copy(_aim).sub(ship.pos).normalize();
       ship.forward(_r);
       const cos = _r.dot(dir);
