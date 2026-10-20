@@ -34,7 +34,10 @@ export function steerToward(ship: Ship, dir: THREE.Vector3, gain = 2.2, maxBank 
   ship.ctrl.roll = clamp((wantBank - bank) * 2.2, -1, 1);
 }
 
-/** Y-wing / wingman attack runs on a capital ship's turbolaser batteries. */
+/**
+ * Y-wing / wingman attack runs on a capital ship's turbolaser batteries. With no battery left to hit, the
+ * pilot dogfights with `fallback` instead of flying off in a straight line.
+ */
 export class BatteryRunBrain {
   private target: Subsystem | null = null;
   private phase: 'run' | 'extend' = 'run';
@@ -42,21 +45,29 @@ export class BatteryRunBrain {
   constructor(
     private caps: CapitalShip[],
     private seed: number,
+    private fallback: DogfightBrain,
   ) {}
+
+  /** True while there is a battery to attack (the pilot is legitimately far from the dogfight). */
+  get onRun(): boolean {
+    return !!this.target?.alive;
+  }
 
   update(ship: Ship, world: World, dt: number): void {
     this.t -= dt;
     ship.ctrl.fire = false;
-    ship.throttle = 0.9;
     if (!this.target?.alive) {
       const all = this.caps.filter((c) => !c.disabled).flatMap((c) => c.subsystems.filter((s) => s.alive && s.kind === 'turbolaser'));
       this.target = all.length ? all[(this.seed + Math.floor(world.time / 11)) % all.length] : null;
     }
-    const dir = new THREE.Vector3();
     const tg = this.target;
     if (!tg) {
-      ship.forward(dir);
-    } else if (this.phase === 'run') {
+      this.fallback.update(ship, world, dt);
+      return;
+    }
+    ship.throttle = 0.9;
+    const dir = new THREE.Vector3();
+    if (this.phase === 'run') {
       dir.copy(tg.pos).sub(ship.pos);
       const d = dir.length();
       dir.normalize();

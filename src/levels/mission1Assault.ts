@@ -146,6 +146,7 @@ export const mission1: LevelDef = {
     const rng = new Rng(9);
     // Shared by every fighter's brain: once the destroyers are out, the dogfight re-centres on the player.
     const leash = { center: battleCentre.clone(), radius: 5500 };
+    const wingBrain = () => new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
     let screenBroken = false;
 
     ctx.onUpdate = (dt) => {
@@ -161,7 +162,7 @@ export const mission1: LevelDef = {
         // Destroyers out: battery-run pilots rejoin the dogfight and everything converges on Red Five.
         screenBroken = true;
         leash.radius = 2200;
-        for (const s of [...wing, ...golds]) if (s.alive) s.brain = new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
+        for (const s of [...wing, ...golds]) if (s.alive) s.brain = wingBrain();
       }
       if (screenBroken) {
         leash.center.copy(player.pos);
@@ -219,11 +220,11 @@ export const mission1: LevelDef = {
       }
       wing.forEach((s, i) => {
         s.sfoilTarget = 1;
-        s.brain = i % 3 === 2 ? new BatteryRunBrain(caps, i) : new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
+        s.brain = i % 3 === 2 ? new BatteryRunBrain(caps, i, wingBrain()) : wingBrain();
       });
       lead.sfoilTarget = 1;
-      lead.brain = new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
-      golds.forEach((s, i) => (s.brain = new BatteryRunBrain(caps, i * 3 + 1)));
+      lead.brain = wingBrain();
+      golds.forEach((s, i) => (s.brain = new BatteryRunBrain(caps, i * 3 + 1, wingBrain())));
       // The first fighters scramble from under the destroyers' hangar bays.
       for (const c of caps) c.launch(ctx.world, 4);
     }

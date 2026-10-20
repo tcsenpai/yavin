@@ -94,12 +94,12 @@ export class Engine {
     this.resize();
   }
 
-  /** Replace the scene (each level owns a fresh scene). Disposes GPU resources of the old one. */
+  /** Replace the scene (each level owns a fresh scene). Disposes GPU resources of the old one unless it is persistent (menu backdrop). */
   setScene(scene: THREE.Scene): void {
     const old = this.scene;
     this.scene = scene;
     this.renderPass.scene = scene;
-    if (old !== scene) disposeScene(old);
+    if (old !== scene && !old.userData.persistent) disposeScene(old);
   }
 
   resize(): void {
@@ -129,6 +129,13 @@ export class Engine {
 
   private applyProfile(): void {
     const p = PROFILES[this.quality];
+    // three does not recompile programs when shadow mapping is toggled: force it, or shadows freeze/never appear.
+    if (this.renderer.shadowMap.enabled !== p.shadows) {
+      this.scene.traverse((o) => {
+        const mm = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (mm) for (const x of Array.isArray(mm) ? mm : [mm]) x.needsUpdate = true;
+      });
+    }
     this.renderer.shadowMap.enabled = p.shadows;
     this.renderPass.samples = p.samples;
     this.bloom.enabled = p.bloom;
@@ -142,6 +149,8 @@ export function disposeScene(scene: THREE.Scene): void {
   const geos = new Set<THREE.BufferGeometry>();
   const mats = new Set<THREE.Material>();
   scene.traverse((o) => {
+    // Lights own their shadow map render target (32 MB at 2048²): free it with the scene.
+    if (o instanceof THREE.Light) o.dispose();
     const m = o as THREE.Mesh;
     if (m.geometry && !m.geometry.userData.shared) geos.add(m.geometry);
     const mm = m.material as THREE.Material | THREE.Material[] | undefined;

@@ -1,0 +1,33 @@
+# Desktop builds for macOS, Windows and Linux, published to the GitHub release of the pushed tag (v*).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The app icon is procedural too: rendered to build/icon.png, converted by electron-builder.
+      - run: npm run icon
+      - run: npm run build
+      # Unsigned builds: no Apple / Windows code-signing certificates are configured.
+      - run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

@@ -124,6 +124,8 @@ export const briefing: LevelDef = {
     let phase = 0;
     let runT = 0;
     ctx.cameraOverride = (cam) => {
+      // The chase camera leaves cam.up rolled with the last flight; lookAt below needs it upright.
+      cam.up.set(0, 1, 0);
       if (phase === 0) {
         cam.position.set(Math.sin(t * 0.05) * 6, 6, 36);
         cam.lookAt(0, 0, 0);

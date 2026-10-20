@@ -78,6 +78,9 @@ const MAX_ALIVE = 12;
 /** Hangar-launched TIEs in the air at once, per Star Destroyer. */
 const MAX_HANGAR_OUT = 8;
 
+const _fwd = new THREE.Vector3();
+const _off = new THREE.Vector3();
+
 function setup(ctx: LevelContext): void {
   const cfg = skirmishConfig;
   const survival = cfg.mode === 'survival';
@@ -93,16 +96,18 @@ function setup(ctx: LevelContext): void {
   // The fight follows the player: everyone stays within a few kilometres of Red Five.
   const leash = { center: player.pos.clone(), radius: 2600 };
   const caps: CapitalShip[] = [];
-  const allyBrain = (i: number, kind: ShipKind) =>
-    caps.length && kind === 'ywing' && i % 2 === 0 ? new BatteryRunBrain(caps, i) : new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
-  const allies: Ship[] = [];
+  const wingBrain = () => new DogfightBrain({ skill: 0.5, minAltitude: 0, leash, fireScale: 0.35 });
+  // Even-slot Y-wings make attack runs on destroyer batteries (dogfighting when none is left).
+  const allyBrain = (i: number, kind: ShipKind) => (caps.length && kind === 'ywing' && i % 2 === 0 ? new BatteryRunBrain(caps, i, wingBrain()) : wingBrain());
+  /** One slot per configured ally: survival reinforcements refill the same slot (same pilot, same callsign). */
+  const allies: (Ship | null)[] = [];
   const spawnAlly = (i: number, pos: THREE.Vector3) => {
     const [key, kind] = WINGMEN[i % WINGMEN.length];
     const s = spawnShip(ctx, kind, key, pos, player.quat.clone(), kind === 'ywing' ? GOLD : RED);
     s.sfoils = s.sfoilTarget = 1;
     s.throttle = 0.8;
     s.brain = allyBrain(i, kind);
-    allies.push(s);
+    allies[i] = s;
     return s;
   };
   for (let i = 0; i < cfg.allies; i++) {
@@ -132,7 +137,9 @@ function setup(ctx: LevelContext): void {
     return player.pos.clone().addScaledVector(dir, dist);
   };
   const refill = () => {
-    let alive = enemies.filter((e) => e.alive).length;
+    // Forget the fallen (survival runs spawn hundreds over time).
+    for (let k = enemies.length - 1; k >= 0; k--) if (!enemies[k].alive) enemies.splice(k, 1);
+    let alive = enemies.length;
     while (alive < MAX_ALIVE && (pool > 0 || advPool > 0)) {
       if (advPool > 0) {
         advPool--;
@@ -155,19 +162,22 @@ function setup(ctx: LevelContext): void {
     // air at once, until the hangar or the bridge is knocked out.
     const launched: Ship[] = [];
     c.hangarInterval = 14;
-    c.launchRoom = () => Math.max(0, MAX_HANGAR_OUT - launched.filter((t) => t.alive).length);
+    c.launchRoom = () => {
+      for (let k = launched.length - 1; k >= 0; k--) if (!launched[k].alive) launched.splice(k, 1);
+      return Math.max(0, MAX_HANGAR_OUT - launched.length);
+    };
     c.onLaunch = (t) => {
       t.brain = new DogfightBrain({ skill: skill * ctx.difficulty, minAltitude: 0, leash });
       launched.push(t);
       enemies.push(t);
     };
     c.onSubsystemDestroyed = (s) => {
-      if (s.kind === 'bridge') ctx.comms.say(allies.some((a) => a.alive && a.nameKey === 'spk.biggs') ? 'biggs' : 'base', 'ls.biggs.bridge');
+      if (s.kind === 'bridge') ctx.comms.say(allies.some((a) => a?.alive && a.nameKey === 'spk.biggs') ? 'biggs' : 'base', 'ls.biggs.bridge');
     };
     caps.push(c);
     // Y-wings switch to attack runs once there is a destroyer to hit.
     allies.forEach((a, j) => {
-      if (a.alive && a.kind === 'ywing') a.brain = allyBrain(j, 'ywing');
+      if (a?.alive && a.kind === 'ywing') a.brain = allyBrain(j, 'ywing');
     });
   };
 
@@ -186,14 +196,9 @@ function setup(ctx: LevelContext): void {
     pool = Math.min(3 + wave * 2, 40);
     advPool = wave >= 3 ? Math.floor(wave / 3) : 0;
     if (wave % 5 === 0) addDestroyer(wave / 5 - 1);
-    // Reinforcements: every third wave the flight is brought back up to strength.
+    // Reinforcements: every third wave each empty or lost slot of the flight is filled again.
     if (wave > 1 && wave % 3 === 1) {
-      let k = allies.filter((a) => a.alive).length;
-      for (let i = 0; k < cfg.allies; i++) {
-        if (allies[i]?.alive) continue;
-        spawnAlly(i, arrivalPoint(1200));
-        k++;
-      }
+      for (let j = 0; j < cfg.allies; j++) if (!allies[j]?.alive) spawnAlly(j, arrivalPoint(1200));
     }
     if (wave > 1) player.hull = Math.min(player.spec.hull, player.hull + player.spec.hull * 0.3);
     ctx.banner('sk.wave', undefined, 3);
@@ -225,11 +230,13 @@ function setup(ctx: LevelContext): void {
     env.update(dt, ctx.camera, player.pos);
     leash.center.copy(player.pos);
     // Stragglers kilometres away are brought back behind the player, out of view.
-    const fwd = player.forward();
+    const fwd = player.forward(_fwd);
     for (const s of ctx.world.ships) {
       if (s === player || !s.alive || s.kinematic) continue;
-      const off = s.pos.clone().sub(player.pos);
-      if (off.length() < 4500 || off.normalize().dot(fwd) > 0.3) continue;
+      // Y-wings on an attack run are meant to be far away, at the destroyer.
+      if (s.brain instanceof BatteryRunBrain && s.brain.onRun) continue;
+      _off.copy(s.pos).sub(player.pos);
+      if (_off.length() < 4500 || _off.normalize().dot(fwd) > 0.3) continue;
       s.pos.copy(arrivalPoint(2200));
       s.vel.copy(player.vel);
     }
@@ -238,9 +245,9 @@ function setup(ctx: LevelContext): void {
 
     const left = enemiesLeft();
     // Markers on the last few fighters and on destroyer shield generators / bridges.
-    const near = enemies.filter((e) => e.alive).sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+    const near = left <= 3 ? enemies.filter((e) => e.alive).sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos)) : [];
     ctx.markers = [
-      ...(left <= 3 ? near.slice(0, 3).map((t) => ({ pos: t.pos, key: 'tgt.tie' as StringKey })) : []),
+      ...near.slice(0, 3).map((t) => ({ pos: t.pos, key: 'tgt.tie' as StringKey })),
       ...caps.flatMap((c) => {
         if (c.disabled) return [];
         const gens = c.subsystems.filter((s) => s.kind === 'shieldGen' && s.alive);
@@ -272,7 +279,8 @@ function setup(ctx: LevelContext): void {
       }
       return;
     }
-    ctx.setObjective(0, { params: { n: left }, done: left === 0 });
+    // Not "done" while a hangar can still launch: otherwise it would tick on and off with every flight.
+    ctx.setObjective(0, { params: { n: left }, done: left === 0 && !caps.some((c) => c.hangarAlive) });
     if (cfg.destroyers) {
       const down = cfg.destroyers - capsLeft();
       ctx.setObjective(1, { params: { n: down, total: cfg.destroyers }, done: down >= cfg.destroyers });

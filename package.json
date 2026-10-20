@@ -1,22 +1,48 @@
 {
   "name": "yavin",
+  "productName": "The Battle of Yavin",
   "version": "1.0.0",
-  "description": "La Battaglia di Yavin, gioco 3D interamente procedurale (Three.js)",
+  "description": "The Battle of Yavin: a fully procedural 3D space-combat game (Three.js)",
+  "author": "tcsenpai <tcsenpai@users.noreply.github.com>",
+  "homepage": "https://github.com/tcsenpai/yavin",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "icon": "node scripts/make-icon.mjs",
+    "app": "npm run build && electron .",
+    "dist": "npm run icon && npm run build && electron-builder"
   },
-  "dependencies": {
-    "@fontsource/news-cycle": "^5.3.0",
-    "@fontsource/orbitron": "^5.3.0",
-    "three": "^0.186.1"
+  "build": {
+    "appId": "com.tcsenpai.yavin",
+    "productName": "The Battle of Yavin",
+    "artifactName": "Battle-of-Yavin-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "portable": { "artifactName": "Battle-of-Yavin-${version}-win-portable.${ext}" },
+    "linux": { "category": "Game", "target": [{ "target": "AppImage", "arch": ["x64"] }, { "target": "deb", "arch": ["x64"] }] },
+    "publish": { "provider": "github", "owner": "tcsenpai", "repo": "yavin", "releaseType": "release" }
   },
   "devDependencies": {
+    "@fontsource/news-cycle": "^5.3.0",
+    "@fontsource/orbitron": "^5.3.0",
     "@types/three": "^0.186.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "three": "^0.186.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
   }

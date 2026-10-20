@@ -4,7 +4,7 @@ import { AudioSystem, type MusicMood } from '../audio/audio';
 import { Engine } from '../core/engine';
 import { Input, type FlightInput } from '../core/input';
 import { clamp, damp } from '../core/rng';
-import { AIM_ASSIST, DIFFICULTY_SCALE, HULL_REGEN, loadSettings, saveSettings, type Settings } from '../core/settings';
+import { AIM_ASSIST, DIFFICULTY_SCALE, HULL_REGEN, loadSettings, saveSettings, type Difficulty, type Settings } from '../core/settings';
 import { t, type StringKey } from '../i18n/i18n';
 import type { LevelContext, LevelDef, LevelStats } from '../levels/context';
 import { buildEnvironment } from '../levels/environment';
@@ -183,6 +183,8 @@ export class Game {
   private ctx: Ctx | null = null;
   private level: LevelDef;
   private checkpoint = 0;
+  /** Difficulty the current level was built with. */
+  private levelDifficulty: Difficulty = 'pilot';
   private inCampaign = false;
   private campaignStats = newStats();
   private last = performance.now();
@@ -213,7 +215,7 @@ export class Game {
   private enemyOnTail = false;
   private tailSince = 0;
   private helpCooldown = 10;
-  private helper: { ship: Ship; chaser: Ship; prevBrain: Ship['brain']; prevScale: number; until: number; speaker: Speaker } | null = null;
+  private helper: { ship: Ship; chaser: Ship; brain: DogfightBrain; prevBrain: Ship['brain']; prevScale: number; until: number; speaker: Speaker } | null = null;
   private feedback: Feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
 
   constructor(
@@ -329,6 +331,8 @@ export class Game {
       cam.quaternion.setFromEuler(new THREE.Euler(0.05, Math.sin(this.elapsed * 0.03) * 0.08 + 0.05, 0));
       env.update(dt, cam, cam.position);
     };
+    // Kept for the whole session: never disposed when a level replaces it.
+    scene.userData.persistent = true;
     this.menuScene = scene;
     this.engine.setScene(scene);
   }
@@ -344,7 +348,6 @@ export class Game {
     this.audio.setMusic('menu');
     this.engine.fade = 0;
     if (this.menuScene) this.engine.setScene(this.menuScene);
-    this.hud.clear();
     this.menus.showTitle();
   }
 
@@ -353,6 +356,10 @@ export class Game {
     this.ctx = null;
     this.comms.clear();
     this.target = null;
+    // Leaving a paused level (restart, checkpoint, quit) must un-suspend audio, and the old HUD must not
+    // stay frozen over the next card.
+    this.audio.resume();
+    this.hud.clear();
   }
 
   /** Called by levels as the player passes a checkpoint: retries resume from here, and it unlocks in the menu. */
@@ -411,7 +418,10 @@ export class Game {
     setTimeout(() => {
       const scene = new THREE.Scene();
       const world = new World(scene, this.audio);
-      const diff = DIFFICULTY_SCALE[this.settings.difficulty];
+      // The level is built for this difficulty: assists, regen and records follow it even if the setting
+      // is changed from the pause menu (that takes effect on the next level).
+      this.levelDifficulty = this.settings.difficulty;
+      const diff = DIFFICULTY_SCALE[this.levelDifficulty];
       world.difficulty = diff;
       this.feedback = { hit: 0, kill: 0, damage: [], toasts: [], score: 0 };
       const ctx = new Ctx(
@@ -560,7 +570,7 @@ export class Game {
     if (!this.settings.completed.includes(level.id)) this.settings.completed.push(level.id);
     const prev = this.settings.best[level.id];
     const isBest = !prev || ctx.stats.score > prev.score;
-    if (isBest) this.settings.best[level.id] = { score: ctx.stats.score, rank, difficulty: this.settings.difficulty };
+    if (isBest) this.settings.best[level.id] = { score: ctx.stats.score, rank, difficulty: this.levelDifficulty };
     saveSettings(this.settings);
     if (this.inCampaign) {
       for (const k of ['kills', 'towers', 'shots', 'hits', 'time', 'score'] as const) this.campaignStats[k] += ctx.stats[k];
@@ -669,7 +679,7 @@ export class Game {
     // already close to a hostile's lead point: it bends the bolts onto that point and adds a little stick friction.
     const fwd = p.forward(_v).clone();
     const aim = p.pos.clone().addScaledVector(fwd, CONVERGENCE);
-    const prof = AIM_ASSIST[this.settings.difficulty];
+    const prof = AIM_ASSIST[this.levelDifficulty];
     this.lockTime = prof.lockTime;
     this.assisted = false;
     if (this.settings.aimAssist) {
@@ -854,7 +864,8 @@ export class Game {
   private findTail(p: Ship, world: World): Ship | null {
     const fwd = p.forward(_v);
     for (const s of world.ships) {
-      if (!s.alive || s.team === p.team) continue;
+      // Scripted pursuers (the trench run) drive their own alarms.
+      if (!s.alive || s.team === p.team || s.kinematic) continue;
       _w.copy(s.pos).sub(p.pos);
       const d = _w.length();
       if (d > 700 || d < 1) continue;
@@ -875,7 +886,8 @@ export class Game {
     if (h) {
       const over = !h.chaser.alive || !h.ship.alive || ctx.world.time > h.until;
       if (!over) return;
-      if (h.ship.alive) {
+      // Hand the pilot back only if nothing (a level script) re-tasked him meanwhile.
+      if (h.ship.alive && h.ship.brain === h.brain) {
         h.ship.brain = h.prevBrain;
         h.ship.damageScale = h.prevScale;
         if (!h.chaser.alive) this.comms.say(h.speaker, 'help.clear');
@@ -887,6 +899,8 @@ export class Game {
     let best: Ship | null = null;
     for (const s of ctx.world.ships) {
       if (!s.alive || s.isPlayer || s.team !== p.team || s.kinematic || !(s.brain instanceof DogfightBrain)) continue;
+      // Wingmen on a scripted errand (e.g. Biggs in trouble) keep it.
+      if (s.brain.opts.forcedTarget) continue;
       if (!s.nameKey || !(s.nameKey in HELPER_SPEAKER)) continue;
       if (!best || s.pos.distanceToSquared(p.pos) < best.pos.distanceToSquared(p.pos)) best = s;
     }
@@ -899,8 +913,9 @@ export class Game {
       best.quat.copy(tail.quat);
       best.vel.copy(tail.vel);
     }
-    this.helper = { ship: best, chaser: tail, prevBrain: best.brain, prevScale: best.damageScale, until: ctx.world.time + 12, speaker };
-    best.brain = new DogfightBrain({ skill: 1, minAltitude: ctx.world.surface ? 60 : 0, forcedTarget: () => tail });
+    const brain = new DogfightBrain({ skill: 1, minAltitude: ctx.world.surface ? 60 : 0, forcedTarget: () => tail });
+    this.helper = { ship: best, chaser: tail, brain, prevBrain: best.brain, prevScale: best.damageScale, until: ctx.world.time + 12, speaker };
+    best.brain = brain;
     best.damageScale = 1;
     this.helpCooldown = 22;
     this.comms.say(speaker, 'help.onHim');
@@ -919,6 +934,11 @@ export class Game {
 
   private step(ctx: Ctx, dt: number): void {
     ctx.stats.time += dt;
+    // Gamepad Start (keyboard P/Esc is handled by the keydown listener).
+    if (this.input.consume('pause')) {
+      this.pause();
+      return;
+    }
     const p = ctx.player;
     let aim: THREE.Vector3 | null = null;
     if (this.level.kind === 'cinematic') {
@@ -936,7 +956,7 @@ export class Game {
 
     if (p && this.level.kind !== 'cinematic') {
       if (p.alive) {
-        const regen = HULL_REGEN[this.settings.difficulty];
+        const regen = HULL_REGEN[this.levelDifficulty];
         if (regen && p.sinceHit >= regen.delay && p.hull < p.spec.hull) {
           // Difficulty-based self-repair (Cadet: always; Pilot: after a few seconds out of fire).
           p.hull = Math.min(p.spec.hull, p.hull + regen.rate * dt);
@@ -1000,7 +1020,7 @@ export class Game {
         cockpit: this.cockpit && !this.lookBack,
         torpedoes: ctx.torpedoes,
         lockProgress: this.lockT / this.lockTime,
-        laserLock: this.laserLock ? 1 : this.laserAcqFor && this.laserAcqFor === this.target ? Math.min(0.99, this.laserAcq / Math.max(AIM_ASSIST[this.settings.difficulty].laserLock?.delay ?? 1, 0.01)) : 0,
+        laserLock: this.laserLock ? 1 : this.laserAcqFor && this.laserAcqFor === this.target ? Math.min(0.99, this.laserAcq / Math.max(AIM_ASSIST[this.levelDifficulty].laserLock?.delay ?? 1, 0.01)) : 0,
         aimPoint: this.lookBack ? null : aim,
         showHud,
         enemyOnTail: this.enemyOnTail,

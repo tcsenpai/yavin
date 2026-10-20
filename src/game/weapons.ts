@@ -15,6 +15,8 @@ interface Bolt {
   damage: number;
   color: 0 | 1;
   heavy: boolean;
+  /** Ship that already slipped this bolt with an evasive roll (never hit by it). */
+  dodged: Targetable | null;
 }
 
 export interface Torpedo {
@@ -300,6 +302,7 @@ export class Weapons {
         damage: 0,
         color: 0,
         heavy: false,
+        dodged: null,
       });
     }
   }
@@ -318,6 +321,7 @@ export class Weapons {
     b.damage = damage;
     b.color = color === 'red' ? 0 : 1;
     b.heavy = heavy;
+    b.dodged = null;
   }
 
   fireTorpedo(owner: Targetable, origin: THREE.Vector3, vel: THREE.Vector3, target: Targetable | null, point: THREE.Vector3 | null): Torpedo {
@@ -458,7 +462,7 @@ export class Weapons {
       let hit: Targetable | null = null;
       let best = 2;
       for (const t of targets) {
-        if (!t.alive || t.team === b.team || t === b.owner) continue;
+        if (!t.alive || t.team === b.team || t === b.owner || t === b.dodged) continue;
         const dx = t.pos.x - b.pos.x;
         const dz = t.pos.z - b.pos.z;
         const reach = b.speed * dt + t.radius + 60;
@@ -469,8 +473,12 @@ export class Weapons {
           hit = t;
         }
       }
-      // A ship in an evasive barrel roll slips most incoming bolts.
-      if (hit && 'evadeT' in hit && typeof hit.evadeT === 'number' && hit.evadeT > 0 && Math.random() < 0.65) hit = null;
+      // A ship in an evasive barrel roll slips most incoming bolts: one roll per bolt, and a slipped bolt
+      // passes through (otherwise it would get re-rolled every frame while inside the hull sphere).
+      if (hit && 'evadeT' in hit && typeof hit.evadeT === 'number' && hit.evadeT > 0 && Math.random() < 0.65) {
+        b.dodged = hit;
+        hit = null;
+      }
       if (hit) {
         _v.lerpVectors(b.prev, b.pos, best);
         hit.takeDamage(b.damage, b.prev, b.owner);
